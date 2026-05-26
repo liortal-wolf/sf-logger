@@ -1,37 +1,45 @@
-// Injects a small "Log to SF" button into Discord's chat-header area.
+// Floating "Log to SF" button anchored to the page (not Discord's DOM).
+// Survives Discord SPA navigation and DOM changes — the button is appended
+// directly to <body> at a fixed screen position.
 
 export function injectButton(onClick: () => void): void {
-  let injected = false;
-
-  const tryInject = () => {
-    if (injected && document.contains(document.getElementById('dsfl-btn'))) return;
-    const header = document.querySelector('[role="main"] section[aria-label]');
-    if (!header) return;
+  const ensureButton = () => {
+    if (document.getElementById('dsfl-btn')) return;
 
     const btn = document.createElement('button');
     btn.id = 'dsfl-btn';
-    btn.textContent = 'Log to SF';
+    btn.textContent = '📋 Log to SF';
     btn.title = 'Capture the current selection and log to Salesforce';
     Object.assign(btn.style, {
-      marginLeft: '8px',
-      padding: '4px 10px',
-      borderRadius: '4px',
-      border: '1px solid #5865f2',
+      position: 'fixed',
+      bottom: '24px',
+      right: '24px',
+      zIndex: '2147483646',
+      padding: '10px 14px',
+      borderRadius: '8px',
+      border: 'none',
       background: '#5865f2',
       color: '#fff',
       cursor: 'pointer',
-      fontSize: '12px',
+      fontSize: '13px',
       fontWeight: '600',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     });
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       onClick();
     });
-    header.appendChild(btn);
-    injected = true;
+    document.body.appendChild(btn);
   };
 
-  const observer = new MutationObserver(() => tryInject());
-  observer.observe(document.body, { childList: true, subtree: true });
-  tryInject();
+  // Inject as soon as body exists, and re-inject if Discord rebuilds the DOM.
+  if (document.body) {
+    ensureButton();
+  } else {
+    document.addEventListener('DOMContentLoaded', ensureButton);
+  }
+
+  const observer = new MutationObserver(() => ensureButton());
+  observer.observe(document.documentElement, { childList: true, subtree: true });
 }

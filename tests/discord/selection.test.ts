@@ -9,12 +9,13 @@ describe('Discord selection extraction', () => {
     expect(out).toContain('yes we renew Q2');
   });
 
-  it('strips reaction-only lines and typing indicators', () => {
+  it('strips typing indicators but passes other content to the LLM for cleanup', () => {
     const raw = '[Lior is typing...]\njoe_acme — Yesterday at 4:30 PM\nyes we renew Q2\n👍 3';
     const out = extractFromSelectionText(raw);
     expect(out).not.toMatch(/typing/i);
-    expect(out).not.toMatch(/^👍 3$/m);
     expect(out).toContain('yes we renew Q2');
+    // Reaction-only lines are kept; the LLM handles them in summarize step
+    expect(out).toContain('👍 3');
   });
 
   it('detects counterparty from a typical Discord DM document title', () => {

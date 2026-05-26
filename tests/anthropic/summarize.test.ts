@@ -58,7 +58,7 @@ describe('anthropic summarize', () => {
     })).rejects.toThrow(/401/);
   });
 
-  it('falls back to subject="Discord" and raw transcript if JSON parsing fails', async () => {
+  it('falls back to a generic subject and raw transcript if JSON parsing fails', async () => {
     vi.spyOn(globalThis as any, 'GM_xmlhttpRequest').mockImplementation((details: any) => {
       details.onload({
         status: 200,
@@ -74,7 +74,55 @@ describe('anthropic summarize', () => {
       transcript: 'raw transcript here',
       counterparty: 'joe'
     });
-    expect(result.subject).toBe('Discord');
+    expect(result.subject).toBe('general update');
     expect(result.description).toBe('raw transcript here');
+  });
+
+  it('strips a leading "Discord:" prefix from the LLM subject to avoid double-prefixing', async () => {
+    vi.spyOn(globalThis as any, 'GM_xmlhttpRequest').mockImplementation((details: any) => {
+      details.onload({
+        status: 200,
+        responseText: JSON.stringify({
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              subject: 'Discord: Joe confirmed Q2 renewal',
+              description: 'transcript here'
+            })
+          }]
+        })
+      });
+    });
+
+    const result = await summarizeForSalesforce({
+      apiKey: 'sk-ant-test',
+      model: 'claude-haiku-4-5-20251001',
+      transcript: 'transcript here',
+      counterparty: 'joe'
+    });
+    expect(result.subject).toBe('Joe confirmed Q2 renewal');
+  });
+
+  it('parses JSON even when LLM wraps it in markdown fences', async () => {
+    vi.spyOn(globalThis as any, 'GM_xmlhttpRequest').mockImplementation((details: any) => {
+      details.onload({
+        status: 200,
+        responseText: JSON.stringify({
+          content: [{
+            type: 'text',
+            text: '```json\n{"subject": "Fenced subject", "description": "Fenced desc"}\n```'
+          }]
+        })
+      });
+    });
+
+    const result = await summarizeForSalesforce({
+      apiKey: 'sk-ant-test',
+      model: 'claude-haiku-4-5-20251001',
+      transcript: 'x',
+      counterparty: 'joe'
+    });
+    expect(result.subject).toBe('Fenced subject');
+    expect(result.description).toBe('Fenced desc');
   });
 });

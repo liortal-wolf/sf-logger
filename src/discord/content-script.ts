@@ -1,5 +1,5 @@
 import { injectButton } from './ui';
-import { extractFromSelectionText, detectCounterpartyFromDocumentTitle } from './selection';
+import { captureDiscordTranscript, detectCounterpartyFromDocumentTitle } from './selection';
 import { getSettings } from '../storage/settings';
 import { summarizeForSalesforce } from '../anthropic/summarize';
 import { identifyTarget } from '../matching/identify';
@@ -18,12 +18,12 @@ async function handleLogClick(): Promise<void> {
     return;
   }
 
-  const selection = window.getSelection()?.toString() ?? '';
-  if (!selection.trim()) {
+  const transcript = captureDiscordTranscript();
+  if (!transcript.trim()) {
     alert('Discord → SF Logger: please highlight some messages first.');
     return;
   }
-  const transcript = extractFromSelectionText(selection);
+  console.log('[discord-sf-logger] captured transcript:', transcript);
   const counterparty = detectCounterpartyFromDocumentTitle(document.title);
 
   const strategy = identifyTarget({ counterparty });
@@ -38,12 +38,15 @@ async function handleLogClick(): Promise<void> {
     });
   } catch (err) {
     console.error('[discord-sf-logger] Anthropic failed, using raw transcript fallback', err);
-    summary = { subject: 'Discord', description: transcript };
+    summary = { subject: 'general update', description: transcript };
   }
+
+  const cleanedSubject = summary.subject.replace(/^\s*discord\s*:?\s*/i, '').trim() || 'general update';
+  const finalSubject = `${settings.subjectPrefix}${cleanedSubject}`;
 
   const result = await showPopup({
     strategy,
-    initialSubject: `${settings.subjectPrefix}${summary.subject}`,
+    initialSubject: finalSubject,
     initialDescription: summary.description
   });
 
