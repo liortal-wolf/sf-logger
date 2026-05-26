@@ -1,19 +1,27 @@
 import { popupHTML } from './popup-template';
 import { popupCSS } from './popup-styles';
-import type { IdentifyStrategy } from '../types';
+import type { IdentifyStrategy, RecentSFRecord } from '../types';
 
 export interface PopupInput {
   strategy: IdentifyStrategy;
   initialSubject: string;
   initialDescription: string;
+  contactChoices: Array<{ id: string; name: string }>; // recently visited Contacts
 }
 
 export interface PopupResult {
   oppId: string;
   oppName: string;
+  accountName: string;
+  whoId: string;       // empty string if no Contact selected
   subject: string;
   description: string;
 }
+
+// SF's defaultFieldValues parser silently truncates around 1500-2000 chars
+// total URL length. Show a warning when the description gets us close so
+// the user knows the clipboard fallback will kick in.
+const URL_WARN_THRESHOLD = 1200;
 
 export function showPopup(input: PopupInput): Promise<PopupResult | null> {
   return new Promise((resolve) => {
@@ -26,8 +34,7 @@ export function showPopup(input: PopupInput): Promise<PopupResult | null> {
     style.textContent = popupCSS;
     shadow.appendChild(style);
 
-    const targetLabel = strategyTargetLabel(input.strategy);
-    const targetSubLabel = strategyTargetSubLabel(input.strategy);
+    const initial = initialTarget(input.strategy);
     const strategyLabel = strategyDescriptor(input.strategy);
     const showPicker = input.strategy.kind === 'picker';
     const showManual = input.strategy.kind === 'manual';
@@ -37,21 +44,38 @@ export function showPopup(input: PopupInput): Promise<PopupResult | null> {
 
     const container = document.createElement('div');
     container.innerHTML = popupHTML({
-      targetLabel,
-      targetSubLabel,
+      opportunityName: initial.oppName,
+      accountName: initial.accountName,
       strategyLabel,
       subject: input.initialSubject,
       description: input.initialDescription,
       pickerChoices,
       showPicker,
-      showManual
+      showManual,
+      contactChoices: input.contactChoices
     });
     shadow.appendChild(container);
 
-    let chosenOppId = input.strategy.kind === 'open-sf-tab' || input.strategy.kind === 'learned-mapping'
-      ? input.strategy.record.id : '';
-    let chosenOppName = input.strategy.kind === 'open-sf-tab' || input.strategy.kind === 'learned-mapping'
-      ? input.strategy.record.name : '';
+    let chosenOppId = initial.oppId;
+    let chosenOppName = initial.oppName;
+    let chosenAccountName = initial.accountName;
+    let chosenContactId = '';
+
+    const updateLengthHint = () => {
+      const desc = (shadow.querySelector('.dsfl-popup__description') as HTMLTextAreaElement | null)?.value ?? '';
+      const subj = (shadow.querySelector('.dsfl-popup__subject') as HTMLInputElement | null)?.value ?? '';
+      const approxLen = desc.length * 2 + subj.length * 2 + 200; // rough URL-encoded estimate
+      const hint = shadow.querySelector('#dsfl-length-hint') as HTMLElement | null;
+      if (!hint) return;
+      if (approxLen > URL_WARN_THRESHOLD) {
+        hint.textContent = `⚠ Long content (~${desc.length} chars) — full description will be copied to clipboard; paste into Comments after SF opens.`;
+        hint.className = 'dsfl-popup__hint dsfl-popup__hint--warn';
+      } else {
+        hint.textContent = `${desc.length} characters`;
+        hint.className = 'dsfl-popup__hint';
+      }
+    };
+    updateLengthHint();
 
     const close = (result: PopupResult | null) => {
       host.remove();
@@ -70,57 +94,69 @@ export function showPopup(input: PopupInput): Promise<PopupResult | null> {
         }
         const subject = (shadow.querySelector('.dsfl-popup__subject') as HTMLInputElement).value;
         const description = (shadow.querySelector('.dsfl-popup__description') as HTMLTextAreaElement).value;
-        close({ oppId: chosenOppId, oppName: chosenOppName, subject, description });
+        close({
+          oppId: chosenOppId,
+          oppName: chosenOppName,
+          accountName: chosenAccountName,
+          whoId: chosenContactId,
+          subject,
+          description
+        });
       }
     });
 
     shadow.addEventListener('change', (e) => {
       const t = e.target as HTMLElement;
-      if (t.getAttribute('data-action') === 'pick-target') {
+      const action = t.getAttribute('data-action');
+      if (action === 'pick-target') {
         const opt = (t as HTMLSelectElement).selectedOptions[0];
         if (opt) {
           chosenOppId = opt.value;
           chosenOppName = opt.getAttribute('data-name') ?? opt.textContent ?? '';
-          const accountName = opt.getAttribute('data-account') ?? '';
-          const label = shadow.querySelector('#dsfl-target-label') as HTMLElement | null;
-          if (label) label.textContent = chosenOppName;
-          const sub = shadow.querySelector('#dsfl-target-sublabel') as HTMLElement | null;
-          if (sub) {
-            if (accountName) {
-              sub.textContent = `Account: ${accountName}`;
-              sub.style.display = '';
-            } else {
-              sub.textContent = '';
-              sub.style.display = 'none';
-            }
-          }
+          chosenAccountName = opt.getAttribute('data-account') ?? '';
+          const oppEl = shadow.querySelector('#dsfl-opp-name') as HTMLElement | null;
+          if (oppEl) oppEl.textContent = chosenOppName || '(none)';
+          const accEl = shadow.querySelector('#dsfl-acc-name') as HTMLElement | null;
+          if (accEl) accEl.textContent = chosenAccountName || '(not detected)';
         }
+      } else if (action === 'pick-contact') {
+        const opt = (t as HTMLSelectElement).selectedOptions[0];
+        chosenContactId = opt?.value ?? '';
+        // Clear the manual ID input when picker chosen
+        const manualEl = shadow.querySelector('.dsfl-popup__contact-id') as HTMLInputElement | null;
+        if (manualEl && chosenContactId) manualEl.value = '';
       }
     });
 
     shadow.addEventListener('input', (e) => {
       const t = e.target as HTMLElement;
-      if (t.getAttribute('data-action') === 'manual-id') {
+      const action = t.getAttribute('data-action');
+      if (action === 'manual-id') {
         chosenOppId = (t as HTMLInputElement).value.trim();
         chosenOppName = chosenOppId;
-        const label = shadow.querySelector('#dsfl-target-label') as HTMLElement | null;
-        if (label) label.textContent = chosenOppName;
+        chosenAccountName = '';
+        const oppEl = shadow.querySelector('#dsfl-opp-name') as HTMLElement | null;
+        if (oppEl) oppEl.textContent = chosenOppName || '(none)';
+        const accEl = shadow.querySelector('#dsfl-acc-name') as HTMLElement | null;
+        if (accEl) accEl.textContent = '(not detected)';
+      } else if (action === 'contact-id') {
+        chosenContactId = (t as HTMLInputElement).value.trim();
+      } else if (action === 'edit-description' || action === 'edit-subject') {
+        updateLengthHint();
       }
     });
   });
 }
 
-function strategyTargetLabel(s: IdentifyStrategy): string {
-  if (s.kind === 'open-sf-tab' || s.kind === 'learned-mapping') return s.record.name;
-  if (s.kind === 'picker') return '(pick below)';
-  return '(paste ID below)';
-}
-
-function strategyTargetSubLabel(s: IdentifyStrategy): string {
-  if ((s.kind === 'open-sf-tab' || s.kind === 'learned-mapping') && s.record.accountName) {
-    return `Account: ${s.record.accountName}`;
+function initialTarget(s: IdentifyStrategy): { oppId: string; oppName: string; accountName: string } {
+  if (s.kind === 'open-sf-tab' || s.kind === 'learned-mapping') {
+    return {
+      oppId: s.record.id,
+      oppName: s.record.name,
+      accountName: s.record.accountName ?? ''
+    };
   }
-  return '';
+  return { oppId: '', oppName: '', accountName: '' };
 }
 
 function strategyDescriptor(s: IdentifyStrategy): string {

@@ -29,6 +29,7 @@ export default defineConfig({
           'GM_xmlhttpRequest',
           'GM_registerMenuCommand',
           'GM_openInTab',
+          'GM_setClipboard',
           'unsafeWindow'
         ],
         connect: ['api.anthropic.com'],

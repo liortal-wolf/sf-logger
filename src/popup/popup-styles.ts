@@ -8,9 +8,9 @@ export const popupCSS = `
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 540px;
+  width: 560px;
   max-width: 90vw;
-  max-height: 85vh;
+  max-height: 88vh;
   background: #fff;
   border: 1px solid #d4d4d4;
   border-radius: 8px;
@@ -40,13 +40,32 @@ export const popupCSS = `
   padding: 4px 0;
 }
 .dsfl-popup__field { padding: 10px 20px; }
-.dsfl-popup__field label {
+.dsfl-popup__field label, .dsfl-popup__strategy-label {
   display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; color: #555;
 }
 .dsfl-popup__strategy { font-weight: 400; color: #888; font-size: 11px; }
-.dsfl-popup__target { font-size: 14px; padding: 8px 10px; background: #f4f4f4; border-radius: 4px 4px 0 0; font-weight: 600; }
-.dsfl-popup__target-sub { font-size: 12px; padding: 4px 10px 8px; background: #f4f4f4; border-radius: 0 0 4px 4px; color: #666; margin-bottom: 0; }
-.dsfl-popup__picker, .dsfl-popup__manual-id, .dsfl-popup__subject {
+.dsfl-popup__target-grid {
+  background: #f4f4f4;
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dsfl-popup__target-row {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.dsfl-popup__target-key {
+  flex: 0 0 90px;
+  color: #666;
+  font-weight: 600;
+}
+.dsfl-popup__target-val { flex: 1; color: #1f1f1f; font-weight: 500; }
+.dsfl-popup__picker, .dsfl-popup__manual-id, .dsfl-popup__subject,
+.dsfl-popup__contact-picker, .dsfl-popup__contact-id {
   width: 100%; padding: 8px 10px; font-size: 14px; border: 1px solid #ccc;
   border-radius: 4px; margin-top: 6px; box-sizing: border-box;
 }
@@ -55,6 +74,10 @@ export const popupCSS = `
   border-radius: 4px; font-family: monospace; box-sizing: border-box; resize: vertical;
   min-height: 120px;
 }
+.dsfl-popup__hint {
+  font-size: 11px; color: #888; margin-top: 4px;
+}
+.dsfl-popup__hint--warn { color: #c47900; }
 .dsfl-popup__footer {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 12px 20px; border-top: 1px solid #eee;

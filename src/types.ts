@@ -7,7 +7,7 @@ export interface LearnedMapping {
 export interface RecentSFRecord {
   id: string;
   name: string;
-  type: 'Opportunity' | 'Account';
+  type: 'Opportunity' | 'Account' | 'Contact';
   visitedAt: string;       // ISO 8601
   lastFocusedAt: string;   // ISO 8601
   accountName?: string;    // For Opportunity records: the linked Account name (if found)

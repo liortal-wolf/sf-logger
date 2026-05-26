@@ -1,12 +1,13 @@
 export const popupHTML = (data: {
-  targetLabel: string;
-  targetSubLabel: string;
+  opportunityName: string;
+  accountName: string;
   strategyLabel: string;
   subject: string;
   description: string;
   pickerChoices: Array<{ id: string; name: string; accountName?: string }>;
   showPicker: boolean;
   showManual: boolean;
+  contactChoices: Array<{ id: string; name: string }>;
 }) => `
 <div class="dsfl-popup">
   <header class="dsfl-popup__header">
@@ -16,12 +17,20 @@ export const popupHTML = (data: {
 
   <div class="dsfl-popup__body">
     <div class="dsfl-popup__field">
-      <label>Salesforce target <span class="dsfl-popup__strategy">(${escapeHTML(data.strategyLabel)})</span></label>
-      <div class="dsfl-popup__target" id="dsfl-target-label">${escapeHTML(data.targetLabel)}</div>
-      ${data.targetSubLabel ? `<div class="dsfl-popup__target-sub" id="dsfl-target-sublabel">${escapeHTML(data.targetSubLabel)}</div>` : `<div class="dsfl-popup__target-sub" id="dsfl-target-sublabel" style="display:none"></div>`}
+      <label class="dsfl-popup__strategy-label">Source <span class="dsfl-popup__strategy">(${escapeHTML(data.strategyLabel)})</span></label>
+      <div class="dsfl-popup__target-grid">
+        <div class="dsfl-popup__target-row">
+          <span class="dsfl-popup__target-key">Opportunity</span>
+          <span class="dsfl-popup__target-val" id="dsfl-opp-name">${escapeHTML(data.opportunityName || '(none)')}</span>
+        </div>
+        <div class="dsfl-popup__target-row">
+          <span class="dsfl-popup__target-key">Account</span>
+          <span class="dsfl-popup__target-val" id="dsfl-acc-name">${escapeHTML(data.accountName || '(not detected)')}</span>
+        </div>
+      </div>
       ${data.showPicker ? `
         <select class="dsfl-popup__picker" data-action="pick-target">
-          <option value="">Pick a record…</option>
+          <option value="">Pick an Opportunity…</option>
           ${data.pickerChoices.map(c => {
             const label = c.accountName ? `${c.name} — ${c.accountName}` : c.name;
             return `<option value="${escapeHTML(c.id)}" data-name="${escapeHTML(c.name)}" data-account="${escapeHTML(c.accountName ?? '')}">${escapeHTML(label)}</option>`;
@@ -34,6 +43,19 @@ export const popupHTML = (data: {
     </div>
 
     <div class="dsfl-popup__field">
+      <label>Contact (optional, links activity to a Person)</label>
+      ${data.contactChoices.length > 0 ? `
+        <select class="dsfl-popup__contact-picker" data-action="pick-contact">
+          <option value="">No contact</option>
+          ${data.contactChoices.map(c =>
+            `<option value="${escapeHTML(c.id)}" data-name="${escapeHTML(c.name)}">${escapeHTML(c.name)}</option>`
+          ).join('')}
+        </select>
+      ` : ''}
+      <input class="dsfl-popup__contact-id" data-action="contact-id" placeholder="Or paste Contact ID (e.g. 003Hu000XYZ)" />
+    </div>
+
+    <div class="dsfl-popup__field">
       <label>Subject</label>
       <input class="dsfl-popup__subject" data-action="edit-subject" value="${escapeHTML(data.subject)}" />
     </div>
@@ -41,6 +63,7 @@ export const popupHTML = (data: {
     <div class="dsfl-popup__field">
       <label>Description (TL;DR + full transcript)</label>
       <textarea class="dsfl-popup__description" data-action="edit-description" rows="8">${escapeHTML(data.description)}</textarea>
+      <div class="dsfl-popup__hint" id="dsfl-length-hint"></div>
     </div>
   </div>
 

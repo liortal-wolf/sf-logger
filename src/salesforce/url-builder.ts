@@ -8,16 +8,20 @@ export interface BuildSFTaskUrlInput {
   description: string;
   whatId: string;
   activityDate: string;
+  whoId?: string; // Optional: Contact or Lead ID — populates the "Name" field
 }
 
 export function buildSFTaskUrl(input: BuildSFTaskUrlInput): string {
-  const fields = {
+  const fields: Record<string, string> = {
     Subject: input.subject,
     Description: input.description,
     WhatId: input.whatId,
     Status: 'Completed',
     ActivityDate: input.activityDate
   };
+  if (input.whoId) {
+    fields.WhoId = input.whoId;
+  }
 
   const inner = Object.entries(fields)
     .map(([k, v]) => `${k}=${v}`)

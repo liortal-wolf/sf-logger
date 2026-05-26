@@ -10,21 +10,15 @@ export function startSalesforceWatcher(): void {
     const name = readRecordName();
     const account = page.type === 'Opportunity' ? readLinkedAccount() : null;
 
-    // Only write if we have a meaningful name OR new account info we didn't have before.
-    // This avoids overwriting a previously good name with the ID-fallback during early ticks.
     const existing = listRecent().find(r => r.id === page.id);
     const hasGoodName = existing && existing.name !== existing.id;
 
     const shouldUpdate =
-      // First time we see this record
       !existing ||
-      // We finally found a real name where we previously fell back to the ID
       (name && !hasGoodName) ||
-      // We finally found the linked Account where we didn't have one before
       (account && !existing.accountName);
 
     if (!shouldUpdate) {
-      // Still bump lastFocusedAt for recency, but don't change anything else
       recordVisit({
         id: page.id,
         name: existing.name,
@@ -37,10 +31,10 @@ export function startSalesforceWatcher(): void {
 
     if (page.type === 'Opportunity' && !account && !existing?.accountName) {
       console.log(
-        `[discord-sf-logger] no linked Account found for Opp ${page.id}. ` +
-        `If this Opp does have one set in SF, please send a screenshot showing where ` +
-        `the Account name appears on the page so the selectors can be improved.`
+        `[discord-sf-logger] no linked Account found yet for Opp ${page.id} — will keep trying`
       );
+    } else if (account) {
+      console.log(`[discord-sf-logger] linked Account captured: ${account.name} (${account.id})`);
     }
 
     recordVisit({
@@ -59,18 +53,18 @@ export function startSalesforceWatcher(): void {
   tick();
 }
 
-function parseLightningUrl(url: string): { id: string; type: 'Opportunity' | 'Account' } | null {
-  const match = url.match(/\/lightning\/r\/(Opportunity|Account)\/([a-zA-Z0-9]{11,18})/);
+function parseLightningUrl(
+  url: string
+): { id: string; type: 'Opportunity' | 'Account' | 'Contact' } | null {
+  const match = url.match(/\/lightning\/r\/(Opportunity|Account|Contact)\/([a-zA-Z0-9]{11,18})/);
   if (!match) return null;
-  return { type: match[1] as 'Opportunity' | 'Account', id: match[2] };
+  return { type: match[1] as 'Opportunity' | 'Account' | 'Contact', id: match[2] };
 }
 
 function readRecordName(): string | null {
-  // Strategy 1: parse the SF tab title — most reliable across orgs
   const fromTitle = parseSFTitle(document.title);
   if (fromTitle) return fromTitle;
 
-  // Strategy 2: scrape page header H1
   const headerH1 = document.querySelector<HTMLElement>(
     'h1.slds-page-header__title, h1.slds-var-p-around_xx-small'
   );
@@ -79,7 +73,6 @@ function readRecordName(): string | null {
     return headerText;
   }
 
-  // Strategy 3: highlights panel output field (Lightning Web Components)
   const lwcName = document.querySelector<HTMLElement>(
     'records-highlights2 lightning-formatted-text, ' +
     'records-highlights2 lightning-formatted-name, ' +
@@ -94,12 +87,7 @@ function readRecordName(): string | null {
 }
 
 function parseSFTitle(title: string): string | null {
-  // Match anything before " | <ObjectType> | Salesforce" or before " | Salesforce"
-  // Examples:
-  //   "Acme Q2 Renewal | Opportunity | Salesforce"
-  //   "Acme Inc | Account | Salesforce"
-  //   "test opp lior discord tool | Salesforce"   (some orgs)
-  const m1 = title.match(/^(.+?)\s*\|\s*(?:Opportunity|Account)\s*\|\s*Salesforce/i);
+  const m1 = title.match(/^(.+?)\s*\|\s*(?:Opportunity|Account|Contact)\s*\|\s*Salesforce/i);
   if (m1) return m1[1].trim();
   const m2 = title.match(/^(.+?)\s*\|\s*Salesforce\s*$/i);
   if (m2 && !looksLikeSFId(m2[1].trim())) return m2[1].trim();
@@ -110,13 +98,38 @@ function looksLikeSFId(s: string): boolean {
   return /^[a-zA-Z0-9]{15,18}$/.test(s);
 }
 
+// Lightning often renders Account lookups inside shadow roots (e.g.
+// <lightning-formatted-lookup>). Plain document.querySelector won't see them.
+// This recursive walker pierces all OPEN shadow roots to find anchor tags
+// pointing at /Account/<id>.
+function findAllAccountLinks(): HTMLAnchorElement[] {
+  const results: HTMLAnchorElement[] = [];
+  const visited = new WeakSet<Element | Document | ShadowRoot>();
+
+  const walk = (root: Document | ShadowRoot) => {
+    if (visited.has(root)) return;
+    visited.add(root);
+
+    const anchors = root.querySelectorAll<HTMLAnchorElement>('a[href*="/Account/"]');
+    for (const a of anchors) {
+      if (/\/Account\/[a-zA-Z0-9]{11,18}/.test(a.href)) {
+        results.push(a);
+      }
+    }
+
+    const all = root.querySelectorAll('*');
+    for (const el of all) {
+      const sr = (el as Element).shadowRoot;
+      if (sr) walk(sr);
+    }
+  };
+
+  walk(document);
+  return results;
+}
+
 function readLinkedAccount(): { name: string; id: string } | null {
-  // Try several selectors — Lightning renders Account lookups differently across versions
-  const candidates = Array.from(
-    document.querySelectorAll<HTMLAnchorElement>(
-      'a[href*="/lightning/r/Account/"], a[data-refid][href*="/Account/"]'
-    )
-  );
+  const candidates = findAllAccountLinks();
   for (const link of candidates) {
     const idMatch = link.href.match(/\/Account\/([a-zA-Z0-9]{11,18})/);
     const id = idMatch?.[1];

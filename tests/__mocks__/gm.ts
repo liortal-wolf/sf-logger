@@ -14,6 +14,7 @@ declare global {
     listener: (key: string, oldValue: unknown, newValue: unknown, remote: boolean) => void
   ) => number;
   var GM_openInTab: (url: string, options?: { active?: boolean; insert?: boolean }) => { close: () => void; closed: boolean; onclose?: () => void };
+  var GM_setClipboard: (text: string, info?: { type?: string; mimetype?: string }) => void;
   // eslint-disable-next-line no-var
   var __resetGM: () => void;
 }
@@ -64,9 +65,16 @@ const openedTabs: string[] = [];
   return control;
 };
 
+let lastClipboardText = '';
+(globalThis as any).GM_setClipboard = (text: string) => {
+  lastClipboardText = text;
+};
+
 (globalThis as any).__resetGM = () => {
   store.clear();
   openedTabs.length = 0;
+  lastClipboardText = '';
 };
 
 export const __getOpenedTabs = () => [...openedTabs];
+export const __getLastClipboardText = () => lastClipboardText;

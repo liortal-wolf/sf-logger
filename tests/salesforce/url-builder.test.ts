@@ -44,4 +44,27 @@ describe('SF Task URL builder', () => {
     expect(parsed.searchParams.get('defaultFieldValues')).toContain('WhatId=006Hu000ABC');
     expect(parsed.searchParams.get('defaultFieldValues')).toContain('Status=Completed');
   });
+
+  it('includes WhoId when supplied (Contact linking)', () => {
+    const url = buildSFTaskUrl({
+      sfDomain: 'overwolf.lightning.force.com',
+      subject: 's',
+      description: 'd',
+      whatId: '006A',
+      whoId: '003Hu000XYZ',
+      activityDate: '2026-05-26'
+    });
+    expect(url).toContain('WhoId%3D003Hu000XYZ');
+  });
+
+  it('omits WhoId when not supplied', () => {
+    const url = buildSFTaskUrl({
+      sfDomain: 'overwolf.lightning.force.com',
+      subject: 's',
+      description: 'd',
+      whatId: '006A',
+      activityDate: '2026-05-26'
+    });
+    expect(url).not.toContain('WhoId');
+  });
 });
