@@ -14,32 +14,34 @@ export const popupHTML = (data: {
     <button class="dsfl-popup__close" data-action="close" aria-label="Close">×</button>
   </header>
 
-  <div class="dsfl-popup__field">
-    <label>Salesforce target <span class="dsfl-popup__strategy">(${escapeHTML(data.strategyLabel)})</span></label>
-    <div class="dsfl-popup__target" id="dsfl-target-label">${escapeHTML(data.targetLabel)}</div>
-    ${data.targetSubLabel ? `<div class="dsfl-popup__target-sub" id="dsfl-target-sublabel">${escapeHTML(data.targetSubLabel)}</div>` : `<div class="dsfl-popup__target-sub" id="dsfl-target-sublabel" style="display:none"></div>`}
-    ${data.showPicker ? `
-      <select class="dsfl-popup__picker" data-action="pick-target">
-        <option value="">Pick a record…</option>
-        ${data.pickerChoices.map(c => {
-          const label = c.accountName ? `${c.name} — ${c.accountName}` : c.name;
-          return `<option value="${escapeHTML(c.id)}" data-name="${escapeHTML(c.name)}" data-account="${escapeHTML(c.accountName ?? '')}">${escapeHTML(label)}</option>`;
-        }).join('')}
-      </select>
-    ` : ''}
-    ${data.showManual ? `
-      <input class="dsfl-popup__manual-id" data-action="manual-id" placeholder="Paste Opportunity ID (e.g. 006Hu000ABC)" />
-    ` : ''}
-  </div>
+  <div class="dsfl-popup__body">
+    <div class="dsfl-popup__field">
+      <label>Salesforce target <span class="dsfl-popup__strategy">(${escapeHTML(data.strategyLabel)})</span></label>
+      <div class="dsfl-popup__target" id="dsfl-target-label">${escapeHTML(data.targetLabel)}</div>
+      ${data.targetSubLabel ? `<div class="dsfl-popup__target-sub" id="dsfl-target-sublabel">${escapeHTML(data.targetSubLabel)}</div>` : `<div class="dsfl-popup__target-sub" id="dsfl-target-sublabel" style="display:none"></div>`}
+      ${data.showPicker ? `
+        <select class="dsfl-popup__picker" data-action="pick-target">
+          <option value="">Pick a record…</option>
+          ${data.pickerChoices.map(c => {
+            const label = c.accountName ? `${c.name} — ${c.accountName}` : c.name;
+            return `<option value="${escapeHTML(c.id)}" data-name="${escapeHTML(c.name)}" data-account="${escapeHTML(c.accountName ?? '')}">${escapeHTML(label)}</option>`;
+          }).join('')}
+        </select>
+      ` : ''}
+      ${data.showManual ? `
+        <input class="dsfl-popup__manual-id" data-action="manual-id" placeholder="Paste Opportunity ID (e.g. 006Hu000ABC)" />
+      ` : ''}
+    </div>
 
-  <div class="dsfl-popup__field">
-    <label>Subject</label>
-    <input class="dsfl-popup__subject" data-action="edit-subject" value="${escapeHTML(data.subject)}" />
-  </div>
+    <div class="dsfl-popup__field">
+      <label>Subject</label>
+      <input class="dsfl-popup__subject" data-action="edit-subject" value="${escapeHTML(data.subject)}" />
+    </div>
 
-  <div class="dsfl-popup__field">
-    <label>Description</label>
-    <textarea class="dsfl-popup__description" data-action="edit-description" rows="10">${escapeHTML(data.description)}</textarea>
+    <div class="dsfl-popup__field">
+      <label>Description (TL;DR + full transcript)</label>
+      <textarea class="dsfl-popup__description" data-action="edit-description" rows="8">${escapeHTML(data.description)}</textarea>
+    </div>
   </div>
 
   <footer class="dsfl-popup__footer">

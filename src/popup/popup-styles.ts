@@ -5,11 +5,12 @@ export const popupCSS = `
 }
 .dsfl-popup {
   position: fixed;
-  top: 20%;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
-  width: 520px;
+  transform: translate(-50%, -50%);
+  width: 540px;
   max-width: 90vw;
+  max-height: 85vh;
   background: #fff;
   border: 1px solid #d4d4d4;
   border-radius: 8px;
@@ -17,19 +18,28 @@ export const popupCSS = `
   z-index: 2147483647;
   color: #1f1f1f;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .dsfl-popup__header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
+  padding: 14px 20px;
   border-bottom: 1px solid #eee;
+  flex: 0 0 auto;
 }
 .dsfl-popup__header h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .dsfl-popup__close {
   background: none; border: none; font-size: 22px; cursor: pointer; line-height: 1;
 }
-.dsfl-popup__field { padding: 12px 20px; }
+.dsfl-popup__body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.dsfl-popup__field { padding: 10px 20px; }
 .dsfl-popup__field label {
   display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; color: #555;
 }
@@ -43,10 +53,13 @@ export const popupCSS = `
 .dsfl-popup__description {
   width: 100%; padding: 8px 10px; font-size: 13px; border: 1px solid #ccc;
   border-radius: 4px; font-family: monospace; box-sizing: border-box; resize: vertical;
+  min-height: 120px;
 }
 .dsfl-popup__footer {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 12px 20px; border-top: 1px solid #eee;
+  background: #fafafa;
+  flex: 0 0 auto;
 }
 .dsfl-popup__footer button {
   padding: 8px 14px; font-size: 14px; border-radius: 4px; cursor: pointer;

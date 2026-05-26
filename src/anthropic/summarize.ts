@@ -7,11 +7,12 @@ export interface SummarizeInput {
   counterparty: string;
 }
 
-const SYSTEM_PROMPT = `You are summarizing a Discord conversation for logging into a Salesforce Opportunity activity. The input transcript was captured from Discord's web client and may be noisy: it can include date dividers, partial embed text, forwarded email snippets, mentions, and stripped attachments.
+const SYSTEM_PROMPT = `You are summarizing a Discord conversation for logging into a Salesforce Opportunity activity. The input transcript was captured from Discord's web client and may be noisy: date dividers, partial embed text, forwarded email snippets, mentions, stripped attachments.
 
-Your output MUST be a single JSON object with exactly two string fields:
-- "subject": a short single sentence (max 80 characters) describing what happened or what was discussed. DO NOT start with "Discord" or "Discord:" — that prefix is added by the calling code. Use specific, useful language ("Joe confirmed Q2 renewal", "Pricing pushback on enterprise tier", "Forwarded email about beta access timing"). If the input is sparse but you can infer the topic from context, use the inference (e.g. "Forwarded email about [topic]" if a forwarded email is visible).
-- "description": a clean, readable rendering of the conversation suitable for a Salesforce Comments field. Preserve who said what and in what order. Include forwarded email subjects/bodies if present in the transcript. Strip Discord-specific noise (typing indicators, reaction counts, edit markers, "today at" timestamps if you have ISO dates). If the input is extremely sparse (e.g. only a date divider), still try to produce a useful description by noting what was visible ("User forwarded an email dated 10/31/24; full content not captured").
+Output a single JSON object with exactly THREE string fields:
+- "subject": one short sentence (max 80 chars) capturing what happened. DO NOT start with "Discord" or "Discord:" — the calling code adds that prefix. Be specific ("Joe confirmed Q2 renewal", "Pricing pushback on enterprise tier", "Forwarded email asking about beta access timing").
+- "tldr": 1-3 short bullet points (each on its own line, prefixed with "- ") covering the key takeaways. Focus on outcomes, commitments, action items, asks. Skip pleasantries. Aim for ~30-60 words total.
+- "transcript": a clean, readable rendering of the conversation suitable for full context. Preserve who said what and in what order. Include forwarded email subjects/bodies if present. Strip Discord noise (typing indicators, reaction counts, edit markers, "today at" timestamps when you have ISO dates). If the input is extremely sparse, still produce something useful ("User forwarded an email dated 10/31/24; full content not captured").
 
 Output only the JSON object. No markdown fences. No commentary. No leading or trailing whitespace.`;
 
@@ -25,25 +26,39 @@ export async function summarizeForSalesforce(
   ]);
 
   const parsed = tryParseJson(responseText);
-  if (parsed && typeof parsed.subject === 'string' && typeof parsed.description === 'string') {
+  if (parsed && typeof parsed.subject === 'string') {
+    const subject = stripDiscordPrefix(parsed.subject);
+    const tldr = typeof parsed.tldr === 'string' ? parsed.tldr.trim() : '';
+    const transcript = typeof parsed.transcript === 'string'
+      ? parsed.transcript
+      : (typeof parsed.description === 'string' ? parsed.description : input.transcript);
     return {
-      subject: stripDiscordPrefix(parsed.subject),
-      description: parsed.description
+      subject,
+      description: formatDescription(tldr, transcript)
     };
   }
 
-  return { subject: 'general update', description: input.transcript };
+  return { subject: 'general update', description: formatDescription('', input.transcript) };
 }
 
-function tryParseJson(text: string): { subject?: unknown; description?: unknown } | null {
-  // Strip common LLM wrappers (markdown fences, leading text)
+function formatDescription(tldr: string, transcript: string): string {
+  if (tldr && transcript) {
+    return `TL;DR\n${tldr}\n\n---\n\nFull conversation:\n${transcript}`;
+  }
+  if (transcript) return transcript;
+  if (tldr) return `TL;DR\n${tldr}`;
+  return '';
+}
+
+function tryParseJson(
+  text: string
+): { subject?: unknown; tldr?: unknown; transcript?: unknown; description?: unknown } | null {
   const trimmed = text.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   const candidate = fenced ? fenced[1] : trimmed;
   try {
     return JSON.parse(candidate);
   } catch {
-    // Try to find the first { ... } block
     const braceMatch = candidate.match(/\{[\s\S]*\}/);
     if (braceMatch) {
       try {
@@ -81,7 +96,7 @@ function callAnthropic(
       },
       data: JSON.stringify({
         model,
-        max_tokens: 1024,
+        max_tokens: 1500,
         system: SYSTEM_PROMPT,
         messages
       }),

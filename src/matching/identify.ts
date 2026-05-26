@@ -39,9 +39,10 @@ export function identifyTarget(input: IdentifyInput): IdentifyStrategy {
   return { kind: 'manual' };
 }
 
-// "Recent" means focused within the last 30 minutes — guards against an Opp tab
-// that's been open for a week being preferred over a relevant learned mapping.
-const RECENCY_THRESHOLD_MS = 30 * 60 * 1000;
+// "Recent" means focused within the last 4 hours — covers a normal work session
+// where you alt-tab between SF and Discord. Anything older falls through to
+// learned-mapping or picker so we don't auto-target a stale Opportunity.
+const RECENCY_THRESHOLD_MS = 4 * 60 * 60 * 1000;
 
 function isRecent(iso: string): boolean {
   const t = Date.parse(iso);

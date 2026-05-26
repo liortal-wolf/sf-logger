@@ -1,23 +1,46 @@
-import { recordVisit } from '../storage/recent-sf';
+import { recordVisit, listRecent } from '../storage/recent-sf';
 
 const POLL_INTERVAL_MS = 2000;
 
-let lastSeenUrl = '';
-
 export function startSalesforceWatcher(): void {
   const tick = () => {
-    if (window.location.href === lastSeenUrl) return;
-    lastSeenUrl = window.location.href;
     const page = parseLightningUrl(window.location.href);
     if (!page) return;
-    const name = readRecordName() ?? page.id;
+
+    const name = readRecordName();
     const account = page.type === 'Opportunity' ? readLinkedAccount() : null;
+
+    // Only write if we have a meaningful name OR new account info we didn't have before.
+    // This avoids overwriting a previously good name with the ID-fallback during early ticks.
+    const existing = listRecent().find(r => r.id === page.id);
+    const hasGoodName = existing && existing.name !== existing.id;
+
+    const shouldUpdate =
+      // First time we see this record
+      !existing ||
+      // We finally found a real name where we previously fell back to the ID
+      (name && !hasGoodName) ||
+      // We finally found the linked Account where we didn't have one before
+      (account && !existing.accountName);
+
+    if (!shouldUpdate) {
+      // Still bump lastFocusedAt for recency, but don't change anything else
+      recordVisit({
+        id: page.id,
+        name: existing.name,
+        type: page.type,
+        accountName: existing.accountName,
+        accountId: existing.accountId
+      });
+      return;
+    }
+
     recordVisit({
       id: page.id,
-      name,
+      name: name ?? existing?.name ?? page.id,
       type: page.type,
-      accountName: account?.name,
-      accountId: account?.id
+      accountName: account?.name ?? existing?.accountName,
+      accountId: account?.id ?? existing?.accountId
     });
   };
 
@@ -34,41 +57,67 @@ function parseLightningUrl(url: string): { id: string; type: 'Opportunity' | 'Ac
   return { type: match[1] as 'Opportunity' | 'Account', id: match[2] };
 }
 
-// Parse the SF tab title — Salesforce sets it to "<RecordName> | <ObjectType> | Salesforce"
-// once the page has loaded. Falls back to DOM scraping for early ticks before the title is set.
 function readRecordName(): string | null {
+  // Strategy 1: parse the SF tab title — most reliable across orgs
   const fromTitle = parseSFTitle(document.title);
   if (fromTitle) return fromTitle;
 
-  // Fallback: scrape from the page header H1 (selectors vary by Lightning version)
-  const h1 = document.querySelector(
-    'h1.slds-page-header__title, ' +
-    'h1.slds-var-p-around_xx-small, ' +
-    '[data-target-selection-name*="Name"] lightning-formatted-text, ' +
-    'records-highlights2 lightning-formatted-text'
+  // Strategy 2: scrape page header H1
+  const headerH1 = document.querySelector<HTMLElement>(
+    'h1.slds-page-header__title, h1.slds-var-p-around_xx-small'
   );
-  const text = h1?.textContent?.trim();
-  return text && text.length > 0 ? text : null;
+  const headerText = headerH1?.textContent?.trim();
+  if (headerText && headerText.length > 0 && !looksLikeSFId(headerText)) {
+    return headerText;
+  }
+
+  // Strategy 3: highlights panel output field (Lightning Web Components)
+  const lwcName = document.querySelector<HTMLElement>(
+    'records-highlights2 lightning-formatted-text, ' +
+    'records-highlights2 lightning-formatted-name, ' +
+    '[data-target-selection-name*="Name"] lightning-formatted-text'
+  );
+  const lwcText = lwcName?.textContent?.trim();
+  if (lwcText && lwcText.length > 0 && !looksLikeSFId(lwcText)) {
+    return lwcText;
+  }
+
+  return null;
 }
 
 function parseSFTitle(title: string): string | null {
+  // Match anything before " | <ObjectType> | Salesforce" or before " | Salesforce"
   // Examples:
   //   "Acme Q2 Renewal | Opportunity | Salesforce"
   //   "Acme Inc | Account | Salesforce"
-  const match = title.match(/^(.+?)\s*\|\s*(Opportunity|Account)\s*\|\s*Salesforce/i);
-  return match ? match[1].trim() : null;
+  //   "test opp lior discord tool | Salesforce"   (some orgs)
+  const m1 = title.match(/^(.+?)\s*\|\s*(?:Opportunity|Account)\s*\|\s*Salesforce/i);
+  if (m1) return m1[1].trim();
+  const m2 = title.match(/^(.+?)\s*\|\s*Salesforce\s*$/i);
+  if (m2 && !looksLikeSFId(m2[1].trim())) return m2[1].trim();
+  return null;
 }
 
-// On an Opportunity page, follow the Account lookup link to extract the
-// linked Account's name + ID.
+function looksLikeSFId(s: string): boolean {
+  return /^[a-zA-Z0-9]{15,18}$/.test(s);
+}
+
 function readLinkedAccount(): { name: string; id: string } | null {
-  const link = document.querySelector<HTMLAnchorElement>('a[href*="/lightning/r/Account/"]');
-  if (!link) return null;
-  const idMatch = link.href.match(/\/lightning\/r\/Account\/([a-zA-Z0-9]{11,18})/);
-  const id = idMatch?.[1];
-  const name = link.textContent?.trim();
-  if (!id || !name) return null;
-  return { name, id };
+  // Try several selectors — Lightning renders Account lookups differently across versions
+  const candidates = Array.from(
+    document.querySelectorAll<HTMLAnchorElement>(
+      'a[href*="/lightning/r/Account/"], a[data-refid][href*="/Account/"]'
+    )
+  );
+  for (const link of candidates) {
+    const idMatch = link.href.match(/\/Account\/([a-zA-Z0-9]{11,18})/);
+    const id = idMatch?.[1];
+    const name = link.textContent?.trim();
+    if (id && name && name.length > 0 && !looksLikeSFId(name)) {
+      return { name, id };
+    }
+  }
+  return null;
 }
 
 export const __testing__ = { parseLightningUrl, parseSFTitle };
