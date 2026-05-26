@@ -63,9 +63,12 @@ export const popupCSS = `
 }
 .dsfl-popup__footer button {
   padding: 8px 14px; font-size: 14px; border-radius: 4px; cursor: pointer;
-  border: 1px solid #ccc; background: #fff;
+  border: 1px solid #ccc; background: #fff; color: #1f1f1f;
 }
-.dsfl-popup__send {
-  background: #5865f2; color: #fff; border-color: #5865f2;
+.dsfl-popup__footer button.dsfl-popup__send {
+  background: #5865f2; color: #fff; border-color: #5865f2; font-weight: 600;
+}
+.dsfl-popup__footer button.dsfl-popup__send:hover {
+  background: #4752c4; border-color: #4752c4;
 }
 `;

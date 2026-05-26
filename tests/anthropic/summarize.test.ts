@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { summarizeForSalesforce } from '../../src/anthropic/summarize';
+import { summarizeForSalesforce, composeDescription } from '../../src/anthropic/summarize';
 
 describe('anthropic summarize', () => {
   beforeEach(() => __resetGM());
@@ -8,7 +8,7 @@ describe('anthropic summarize', () => {
     vi.restoreAllMocks();
   });
 
-  it('calls Anthropic API with the correct headers and body', async () => {
+  it('calls Anthropic API with the correct headers and body, returns subject+tldr', async () => {
     const xhrSpy = vi.spyOn(globalThis as any, 'GM_xmlhttpRequest').mockImplementation((details: any) => {
       expect(details.url).toBe('https://api.anthropic.com/v1/messages');
       expect(details.method).toBe('POST');
@@ -26,7 +26,7 @@ describe('anthropic summarize', () => {
             type: 'text',
             text: JSON.stringify({
               subject: 'Joe confirmed renewal',
-              description: '[2026-05-26] joe_acme: yes we renew Q2'
+              tldr: '- Joe committed to Q2 renewal at current pricing'
             })
           }]
         })
@@ -41,7 +41,7 @@ describe('anthropic summarize', () => {
     });
 
     expect(result.subject).toBe('Joe confirmed renewal');
-    expect(result.description).toBe('[2026-05-26] joe_acme: yes we renew Q2');
+    expect(result.tldr).toBe('- Joe committed to Q2 renewal at current pricing');
     expect(xhrSpy).toHaveBeenCalledOnce();
   });
 
@@ -58,7 +58,7 @@ describe('anthropic summarize', () => {
     })).rejects.toThrow(/401/);
   });
 
-  it('falls back to a generic subject and raw transcript if JSON parsing fails', async () => {
+  it('falls back to subject="general update" and empty tldr if JSON parsing fails', async () => {
     vi.spyOn(globalThis as any, 'GM_xmlhttpRequest').mockImplementation((details: any) => {
       details.onload({
         status: 200,
@@ -75,7 +75,7 @@ describe('anthropic summarize', () => {
       counterparty: 'joe'
     });
     expect(result.subject).toBe('general update');
-    expect(result.description).toBe('raw transcript here');
+    expect(result.tldr).toBe('');
   });
 
   it('strips a leading "Discord:" prefix from the LLM subject to avoid double-prefixing', async () => {
@@ -87,7 +87,7 @@ describe('anthropic summarize', () => {
             type: 'text',
             text: JSON.stringify({
               subject: 'Discord: Joe confirmed Q2 renewal',
-              description: 'transcript here'
+              tldr: '- something'
             })
           }]
         })
@@ -110,7 +110,7 @@ describe('anthropic summarize', () => {
         responseText: JSON.stringify({
           content: [{
             type: 'text',
-            text: '```json\n{"subject": "Fenced subject", "description": "Fenced desc"}\n```'
+            text: '```json\n{"subject": "Fenced subject", "tldr": "- Fenced bullet"}\n```'
           }]
         })
       });
@@ -123,6 +123,32 @@ describe('anthropic summarize', () => {
       counterparty: 'joe'
     });
     expect(result.subject).toBe('Fenced subject');
-    expect(result.description).toBe('Fenced desc');
+    expect(result.tldr).toBe('- Fenced bullet');
+  });
+});
+
+describe('composeDescription', () => {
+  it('joins TL;DR + transcript with a separator when both are present', () => {
+    const out = composeDescription('- Point A\n- Point B', 'joe: yes\nlior: great');
+    expect(out).toBe(
+      'TL;DR\n- Point A\n- Point B\n\n---\n\nFull conversation:\njoe: yes\nlior: great'
+    );
+  });
+
+  it('returns the transcript alone when there is no TL;DR', () => {
+    expect(composeDescription('', 'transcript only')).toBe('transcript only');
+  });
+
+  it('returns the TL;DR alone when there is no transcript', () => {
+    expect(composeDescription('- Point A', '')).toBe('TL;DR\n- Point A');
+  });
+
+  it('returns empty string when both are empty', () => {
+    expect(composeDescription('', '')).toBe('');
+  });
+
+  it('trims whitespace from both inputs', () => {
+    const out = composeDescription('  - X  ', '  joe: hi  ');
+    expect(out).toBe('TL;DR\n- X\n\n---\n\nFull conversation:\njoe: hi');
   });
 });

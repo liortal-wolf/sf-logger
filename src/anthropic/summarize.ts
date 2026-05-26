@@ -1,4 +1,6 @@
-import type { SummarizedConversation } from '../types';
+// AI is responsible ONLY for producing a short subject + bulleted TL;DR.
+// The actual conversation transcript is kept verbatim (captured in Discord
+// content script) and composed into the final description by the caller.
 
 export interface SummarizeInput {
   apiKey: string;
@@ -7,18 +9,20 @@ export interface SummarizeInput {
   counterparty: string;
 }
 
-const SYSTEM_PROMPT = `You are summarizing a Discord conversation for logging into a Salesforce Opportunity activity. The input transcript was captured from Discord's web client and may be noisy: date dividers, partial embed text, forwarded email snippets, mentions, stripped attachments.
+export interface AISummary {
+  subject: string;
+  tldr: string;
+}
 
-Output a single JSON object with exactly THREE string fields:
-- "subject": one short sentence (max 80 chars) capturing what happened. DO NOT start with "Discord" or "Discord:" — the calling code adds that prefix. Be specific ("Joe confirmed Q2 renewal", "Pricing pushback on enterprise tier", "Forwarded email asking about beta access timing").
-- "tldr": 1-3 short bullet points (each on its own line, prefixed with "- ") covering the key takeaways. Focus on outcomes, commitments, action items, asks. Skip pleasantries. Aim for ~30-60 words total.
-- "transcript": a clean, readable rendering of the conversation suitable for full context. Preserve who said what and in what order. Include forwarded email subjects/bodies if present. Strip Discord noise (typing indicators, reaction counts, edit markers, "today at" timestamps when you have ISO dates). If the input is extremely sparse, still produce something useful ("User forwarded an email dated 10/31/24; full content not captured").
+const SYSTEM_PROMPT = `You generate a Salesforce activity headline + TL;DR from a Discord conversation excerpt.
 
-Output only the JSON object. No markdown fences. No commentary. No leading or trailing whitespace.`;
+Output a single JSON object with exactly two string fields:
+- "subject": one short sentence (max 80 chars) capturing what happened. DO NOT start with "Discord" or "Discord:" — the caller adds that prefix. Be specific ("Joe confirmed Q2 renewal", "Pricing pushback on enterprise tier", "Forwarded email asking about beta access timing").
+- "tldr": 1-3 short bullet points, each on its own line prefixed with "- ", covering outcomes, commitments, action items, asks. Skip pleasantries. Aim for ~30-60 words total. If the conversation is too sparse to bullet, write a single short sentence summary instead.
 
-export async function summarizeForSalesforce(
-  input: SummarizeInput
-): Promise<SummarizedConversation> {
+Output only the JSON object. No markdown fences. No commentary.`;
+
+export async function summarizeForSalesforce(input: SummarizeInput): Promise<AISummary> {
   const userPrompt = `Conversation with @${input.counterparty || 'unknown'}:\n\n${input.transcript}`;
 
   const responseText = await callAnthropic(input.apiKey, input.model, [
@@ -27,32 +31,31 @@ export async function summarizeForSalesforce(
 
   const parsed = tryParseJson(responseText);
   if (parsed && typeof parsed.subject === 'string') {
-    const subject = stripDiscordPrefix(parsed.subject);
-    const tldr = typeof parsed.tldr === 'string' ? parsed.tldr.trim() : '';
-    const transcript = typeof parsed.transcript === 'string'
-      ? parsed.transcript
-      : (typeof parsed.description === 'string' ? parsed.description : input.transcript);
     return {
-      subject,
-      description: formatDescription(tldr, transcript)
+      subject: stripDiscordPrefix(parsed.subject),
+      tldr: typeof parsed.tldr === 'string' ? parsed.tldr.trim() : ''
     };
   }
 
-  return { subject: 'general update', description: formatDescription('', input.transcript) };
+  return { subject: 'general update', tldr: '' };
 }
 
-function formatDescription(tldr: string, transcript: string): string {
-  if (tldr && transcript) {
-    return `TL;DR\n${tldr}\n\n---\n\nFull conversation:\n${transcript}`;
+// Compose the final SF Description: AI's TL;DR at the top, separator, then the
+// verbatim transcript the user captured.
+export function composeDescription(tldr: string, verbatimTranscript: string): string {
+  const trimmedTldr = tldr.trim();
+  const trimmedTranscript = verbatimTranscript.trim();
+  if (trimmedTldr && trimmedTranscript) {
+    return `TL;DR\n${trimmedTldr}\n\n---\n\nFull conversation:\n${trimmedTranscript}`;
   }
-  if (transcript) return transcript;
-  if (tldr) return `TL;DR\n${tldr}`;
+  if (trimmedTranscript) return trimmedTranscript;
+  if (trimmedTldr) return `TL;DR\n${trimmedTldr}`;
   return '';
 }
 
 function tryParseJson(
   text: string
-): { subject?: unknown; tldr?: unknown; transcript?: unknown; description?: unknown } | null {
+): { subject?: unknown; tldr?: unknown } | null {
   const trimmed = text.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   const candidate = fenced ? fenced[1] : trimmed;
@@ -96,7 +99,7 @@ function callAnthropic(
       },
       data: JSON.stringify({
         model,
-        max_tokens: 1500,
+        max_tokens: 600,
         system: SYSTEM_PROMPT,
         messages
       }),

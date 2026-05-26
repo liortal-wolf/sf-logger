@@ -1,7 +1,7 @@
 import { injectButton } from './ui';
 import { captureDiscordTranscript, detectCounterpartyFromDocumentTitle } from './selection';
 import { getSettings } from '../storage/settings';
-import { summarizeForSalesforce } from '../anthropic/summarize';
+import { summarizeForSalesforce, composeDescription } from '../anthropic/summarize';
 import { identifyTarget } from '../matching/identify';
 import { showPopup } from '../popup/popup';
 import { buildSFTaskUrl } from '../salesforce/url-builder';
@@ -18,36 +18,41 @@ async function handleLogClick(): Promise<void> {
     return;
   }
 
-  const transcript = captureDiscordTranscript();
-  if (!transcript.trim()) {
-    alert('Discord → SF Logger: please highlight some messages first.');
+  const captured = captureDiscordTranscript();
+  if (!captured.text.trim()) {
+    alert('Discord → SF Logger: no messages found to log. Try again from inside the channel.');
     return;
   }
-  console.log('[discord-sf-logger] captured transcript:', transcript);
+  console.log(
+    `[discord-sf-logger] captured ${captured.messageCount} messages via ${captured.source}:`,
+    captured.text
+  );
   const counterparty = detectCounterpartyFromDocumentTitle(document.title);
 
   const strategy = identifyTarget({ counterparty });
 
-  let summary;
+  let aiSummary: { subject: string; tldr: string };
   try {
-    summary = await summarizeForSalesforce({
+    aiSummary = await summarizeForSalesforce({
       apiKey: settings.anthropicApiKey,
       model: settings.anthropicModel,
-      transcript,
+      transcript: captured.text,
       counterparty
     });
   } catch (err) {
-    console.error('[discord-sf-logger] Anthropic failed, using raw transcript fallback', err);
-    summary = { subject: 'general update', description: transcript };
+    console.error('[discord-sf-logger] Anthropic call failed, falling back to subject="general update"', err);
+    aiSummary = { subject: 'general update', tldr: '' };
   }
 
-  const cleanedSubject = summary.subject.replace(/^\s*discord\s*:?\s*/i, '').trim() || 'general update';
+  // Verbatim transcript — never AI-modified. User saw exactly this in the popup.
+  const description = composeDescription(aiSummary.tldr, captured.text);
+  const cleanedSubject = aiSummary.subject.replace(/^\s*discord\s*:?\s*/i, '').trim() || 'general update';
   const finalSubject = `${settings.subjectPrefix}${cleanedSubject}`;
 
   const result = await showPopup({
     strategy,
     initialSubject: finalSubject,
-    initialDescription: summary.description
+    initialDescription: description
   });
 
   if (!result) return;

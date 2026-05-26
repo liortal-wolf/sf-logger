@@ -35,6 +35,14 @@ export function startSalesforceWatcher(): void {
       return;
     }
 
+    if (page.type === 'Opportunity' && !account && !existing?.accountName) {
+      console.log(
+        `[discord-sf-logger] no linked Account found for Opp ${page.id}. ` +
+        `If this Opp does have one set in SF, please send a screenshot showing where ` +
+        `the Account name appears on the page so the selectors can be improved.`
+      );
+    }
+
     recordVisit({
       id: page.id,
       name: name ?? existing?.name ?? page.id,
