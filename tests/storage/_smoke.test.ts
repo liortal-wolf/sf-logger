@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 describe('GM mock smoke test', () => {
   beforeEach(() => __resetGM());
+  afterEach(() => __resetGM());
 
   it('round-trips a value through GM_setValue / GM_getValue', () => {
     GM_setValue('foo', { a: 1 });

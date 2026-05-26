@@ -13,7 +13,7 @@ declare global {
     key: string,
     listener: (key: string, oldValue: unknown, newValue: unknown, remote: boolean) => void
   ) => number;
-  var GM_openInTab: (url: string, options?: { active?: boolean; insert?: boolean }) => void;
+  var GM_openInTab: (url: string, options?: { active?: boolean; insert?: boolean }) => { close: () => void; closed: boolean; onclose?: () => void };
   // eslint-disable-next-line no-var
   var __resetGM: () => void;
 }
@@ -56,6 +56,12 @@ const openedTabs: string[] = [];
 
 (globalThis as any).GM_openInTab = (url: string) => {
   openedTabs.push(url);
+  const control = {
+    closed: false,
+    close: () => { control.closed = true; },
+    onclose: undefined as (() => void) | undefined
+  };
+  return control;
 };
 
 (globalThis as any).__resetGM = () => {
