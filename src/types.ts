@@ -10,6 +10,8 @@ export interface RecentSFRecord {
   type: 'Opportunity' | 'Account';
   visitedAt: string;       // ISO 8601
   lastFocusedAt: string;   // ISO 8601
+  accountName?: string;    // For Opportunity records: the linked Account name (if found)
+  accountId?: string;      // For Opportunity records: the linked Account ID (if found)
 }
 
 export interface Settings {

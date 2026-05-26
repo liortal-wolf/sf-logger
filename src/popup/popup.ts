@@ -27,16 +27,18 @@ export function showPopup(input: PopupInput): Promise<PopupResult | null> {
     shadow.appendChild(style);
 
     const targetLabel = strategyTargetLabel(input.strategy);
+    const targetSubLabel = strategyTargetSubLabel(input.strategy);
     const strategyLabel = strategyDescriptor(input.strategy);
     const showPicker = input.strategy.kind === 'picker';
     const showManual = input.strategy.kind === 'manual';
     const pickerChoices = input.strategy.kind === 'picker'
-      ? input.strategy.choices.map(c => ({ id: c.id, name: c.name }))
+      ? input.strategy.choices.map(c => ({ id: c.id, name: c.name, accountName: c.accountName }))
       : [];
 
     const container = document.createElement('div');
     container.innerHTML = popupHTML({
       targetLabel,
+      targetSubLabel,
       strategyLabel,
       subject: input.initialSubject,
       description: input.initialDescription,
@@ -78,9 +80,20 @@ export function showPopup(input: PopupInput): Promise<PopupResult | null> {
         const opt = (t as HTMLSelectElement).selectedOptions[0];
         if (opt) {
           chosenOppId = opt.value;
-          chosenOppName = opt.textContent ?? '';
+          chosenOppName = opt.getAttribute('data-name') ?? opt.textContent ?? '';
+          const accountName = opt.getAttribute('data-account') ?? '';
           const label = shadow.querySelector('#dsfl-target-label') as HTMLElement | null;
           if (label) label.textContent = chosenOppName;
+          const sub = shadow.querySelector('#dsfl-target-sublabel') as HTMLElement | null;
+          if (sub) {
+            if (accountName) {
+              sub.textContent = `Account: ${accountName}`;
+              sub.style.display = '';
+            } else {
+              sub.textContent = '';
+              sub.style.display = 'none';
+            }
+          }
         }
       }
     });
@@ -101,6 +114,13 @@ function strategyTargetLabel(s: IdentifyStrategy): string {
   if (s.kind === 'open-sf-tab' || s.kind === 'learned-mapping') return s.record.name;
   if (s.kind === 'picker') return '(pick below)';
   return '(paste ID below)';
+}
+
+function strategyTargetSubLabel(s: IdentifyStrategy): string {
+  if ((s.kind === 'open-sf-tab' || s.kind === 'learned-mapping') && s.record.accountName) {
+    return `Account: ${s.record.accountName}`;
+  }
+  return '';
 }
 
 function strategyDescriptor(s: IdentifyStrategy): string {

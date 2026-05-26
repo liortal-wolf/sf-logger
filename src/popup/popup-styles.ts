@@ -34,7 +34,8 @@ export const popupCSS = `
   display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; color: #555;
 }
 .dsfl-popup__strategy { font-weight: 400; color: #888; font-size: 11px; }
-.dsfl-popup__target { font-size: 14px; padding: 8px 10px; background: #f4f4f4; border-radius: 4px; }
+.dsfl-popup__target { font-size: 14px; padding: 8px 10px; background: #f4f4f4; border-radius: 4px 4px 0 0; font-weight: 600; }
+.dsfl-popup__target-sub { font-size: 12px; padding: 4px 10px 8px; background: #f4f4f4; border-radius: 0 0 4px 4px; color: #666; margin-bottom: 0; }
 .dsfl-popup__picker, .dsfl-popup__manual-id, .dsfl-popup__subject {
   width: 100%; padding: 8px 10px; font-size: 14px; border: 1px solid #ccc;
   border-radius: 4px; margin-top: 6px; box-sizing: border-box;

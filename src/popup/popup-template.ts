@@ -1,9 +1,10 @@
 export const popupHTML = (data: {
   targetLabel: string;
+  targetSubLabel: string;
   strategyLabel: string;
   subject: string;
   description: string;
-  pickerChoices: Array<{ id: string; name: string }>;
+  pickerChoices: Array<{ id: string; name: string; accountName?: string }>;
   showPicker: boolean;
   showManual: boolean;
 }) => `
@@ -16,12 +17,14 @@ export const popupHTML = (data: {
   <div class="dsfl-popup__field">
     <label>Salesforce target <span class="dsfl-popup__strategy">(${escapeHTML(data.strategyLabel)})</span></label>
     <div class="dsfl-popup__target" id="dsfl-target-label">${escapeHTML(data.targetLabel)}</div>
+    ${data.targetSubLabel ? `<div class="dsfl-popup__target-sub" id="dsfl-target-sublabel">${escapeHTML(data.targetSubLabel)}</div>` : `<div class="dsfl-popup__target-sub" id="dsfl-target-sublabel" style="display:none"></div>`}
     ${data.showPicker ? `
       <select class="dsfl-popup__picker" data-action="pick-target">
         <option value="">Pick a record…</option>
-        ${data.pickerChoices.map(c =>
-          `<option value="${escapeHTML(c.id)}">${escapeHTML(c.name)}</option>`
-        ).join('')}
+        ${data.pickerChoices.map(c => {
+          const label = c.accountName ? `${c.name} — ${c.accountName}` : c.name;
+          return `<option value="${escapeHTML(c.id)}" data-name="${escapeHTML(c.name)}" data-account="${escapeHTML(c.accountName ?? '')}">${escapeHTML(label)}</option>`;
+        }).join('')}
       </select>
     ` : ''}
     ${data.showManual ? `
