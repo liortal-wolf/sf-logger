@@ -1,8 +1,13 @@
-// Entry point. Dispatch to discord or salesforce based on hostname.
+import { startDiscordIntegration } from './discord/content-script';
+import { startSalesforceWatcher } from './salesforce/content-script';
+import { registerSettingsMenu } from './settings/settings-ui';
+
+registerSettingsMenu();
+
 const host = window.location.hostname;
 
 if (host === 'discord.com') {
-  console.log('[discord-sf-logger] running on Discord');
+  startDiscordIntegration();
 } else if (host.endsWith('.lightning.force.com')) {
-  console.log('[discord-sf-logger] running on Salesforce Lightning');
+  startSalesforceWatcher();
 }
