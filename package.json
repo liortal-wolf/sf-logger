@@ -1,0 +1,22 @@
+{
+  "name": "discord-sf-logger",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tampermonkey userscript to log Discord web conversations to Salesforce Opportunities",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "happy-dom": "^20.9.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14",
+    "vite-plugin-monkey": "^8.0.5",
+    "vitest": "^4.1.7"
+  }
+}

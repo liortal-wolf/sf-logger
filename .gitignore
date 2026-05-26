@@ -6,7 +6,7 @@
 
 # Node / build outputs (will apply once implementation starts)
 node_modules/
-dist/*.map
+dist/
 .env
 .env.local
 
