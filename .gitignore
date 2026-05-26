@@ -1,0 +1,15 @@
+# Local Claude/agent state
+.claude/
+
+# Validation screenshots (kept locally, not part of the product)
+*.png
+
+# Node / build outputs (will apply once implementation starts)
+node_modules/
+dist/*.map
+.env
+.env.local
+
+# OS noise
+Thumbs.db
+.DS_Store
