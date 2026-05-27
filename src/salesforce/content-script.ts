@@ -225,7 +225,10 @@ function readLinkedAccount(): { name: string; id: string } | null {
   const candidates = findAllAccountLinks();
 
   const scored = candidates.map(link => {
-    const text = link.textContent?.trim() ?? '';
+    // SF Lightning renders the visible Account name inside a closed shadow root
+    // (lightning-formatted-text / records-hoverable-link), so a.textContent is "".
+    // a.innerText returns the computed visible text across shadow boundaries.
+    const text = readVisibleText(link);
     const idMatch = link.href.match(/\/Account\/([a-zA-Z0-9]{11,18})/);
     const id = idMatch?.[1] ?? '';
 
@@ -291,31 +294,20 @@ function readAccountFromLabeledField(): { name: string; id: string } | null {
   );
 
   for (const item of items) {
-    const labelEl = item.querySelector('.slds-form-element__label, .test-id__field-label, label, .field-label');
-    const label = labelEl?.textContent?.trim().toLowerCase();
-    if (label !== 'account name' && label !== 'account') continue;
+    const labelText = readLabelInside(item);
+    if (!labelText) continue;
+    const labelLower = labelText.toLowerCase();
+    if (labelLower !== 'account name' && labelLower !== 'account') continue;
 
-    // Look at any anchor with /Account/<id> inside this field's container.
     let id = '';
-    const innerAnchor = item.querySelector<HTMLAnchorElement>('a[href*="/Account/"]');
+    const innerAnchor = queryDeep<HTMLAnchorElement>(item, 'a[href*="/Account/"]');
     if (innerAnchor) {
       const m = innerAnchor.href.match(/\/Account\/([a-zA-Z0-9]{11,18})/);
       if (m) id = m[1];
     }
 
-    // Visible name lives in the value cell — try several selectors.
-    const valueEl = item.querySelector(
-      'a[href*="/Account/"], ' +
-      'records-formula-output, ' +
-      'lightning-formatted-text, ' +
-      'lightning-formatted-name, ' +
-      '.slds-form-element__static, ' +
-      '.test-id__field-value, ' +
-      'records-output-field'
-    );
-    const text = valueEl?.textContent?.trim();
-
-    if (text && text.length > 0 && !isBadAccountName(text)) {
+    const text = readValueInside(item, labelText);
+    if (text && !isBadAccountName(text)) {
       if (id) return { name: text, id };
       console.log('[discord-sf-logger] account name found but no id; storing name only', text);
       return { name: text, id: '' };
@@ -324,30 +316,105 @@ function readAccountFromLabeledField(): { name: string; id: string } | null {
   return null;
 }
 
-// Scrape the "Discord" custom field value from a Contact detail page. Looks
-// for a layout item whose label is exactly "Discord" and reads the rendered
-// value (lightning-formatted-text or similar).
+// Scrape the "Discord" custom field value from a Contact detail page.
+//
+// Two strategies — structural and then visible-text fallback. SF renders the
+// label inside each `records-record-layout-item`'s own shadow root, so a plain
+// `item.querySelector(...)` returns null; we must descend into `item.shadowRoot`
+// (via queryDeep) to find the label/value pair. As a safety net for orgs where
+// closed shadow DOM blocks us entirely, we also scan `document.body.innerText`
+// for a "Discord\n<value>" pattern — `innerText` sees rendered text regardless
+// of shadow mode.
 function readContactDiscordUsername(): string | null {
   const items = findAllInShadow<HTMLElement>(
-    'records-record-layout-item, .slds-form-element, force-record-layout-row > *'
+    'records-record-layout-item, records-highlights-details-item, force-record-layout-item, .slds-form-element'
   );
   for (const item of items) {
-    const labelEl = item.querySelector('.slds-form-element__label, .test-id__field-label, label');
-    const label = labelEl?.textContent?.trim().toLowerCase();
-    if (label !== 'discord') continue;
+    const labelText = readLabelInside(item);
+    if (!labelText || !/^discord\b/i.test(labelText)) continue;
 
-    const valueEl = item.querySelector(
-      'lightning-formatted-text, ' +
-      '.slds-form-element__static, ' +
-      '.test-id__field-value, ' +
-      'records-output-field'
-    );
-    const value = valueEl?.textContent?.trim();
-    if (value && value.length > 0 && value !== '-' && value !== '—') {
-      return value.replace(/^@/, ''); // store without leading @
+    const value = readValueInside(item, labelText);
+    if (value && value !== '-' && value !== '—') {
+      return value.replace(/^@/, '');
+    }
+  }
+
+  return readDiscordFromVisibleText();
+}
+
+// Walk all elements inside `el` AND inside `el.shadowRoot` (one level), return
+// the first match for `selector`. SF's LWC components host their label/value
+// in their own shadow root, which plain querySelector can't see.
+function queryDeep<T extends Element = Element>(el: Element, selector: string): T | null {
+  const light = el.querySelector<T>(selector);
+  if (light) return light;
+  if (el.shadowRoot) {
+    const shadowMatch = el.shadowRoot.querySelector<T>(selector);
+    if (shadowMatch) return shadowMatch;
+  }
+  return null;
+}
+
+function readLabelInside(item: HTMLElement): string | null {
+  const sel = '.slds-form-element__label, .test-id__field-label, label, .field-label';
+  const el = queryDeep<HTMLElement>(item, sel);
+  if (!el) return null;
+  const text = readVisibleText(el);
+  return text || null;
+}
+
+function readValueInside(item: HTMLElement, labelText: string): string | null {
+  const sel =
+    'a[href*="/Account/"], ' +
+    'lightning-formatted-text, ' +
+    'lightning-formatted-name, ' +
+    'lightning-formatted-rich-text, ' +
+    'records-formula-output, ' +
+    'records-output-field, ' +
+    '.slds-form-element__static, ' +
+    '.test-id__field-value';
+  const el = queryDeep<HTMLElement>(item, sel);
+  if (el) {
+    const t = readVisibleText(el);
+    if (t && t !== '-' && t !== '—' && t.toLowerCase() !== labelText.toLowerCase()) return t;
+  }
+  // Last resort: subtract the label from the item's overall visible text.
+  const itemText = readVisibleText(item);
+  if (itemText) {
+    const remainder = itemText.startsWith(labelText)
+      ? itemText.slice(labelText.length).trim()
+      : itemText;
+    if (remainder && remainder !== '-' && remainder !== '—' && remainder.length < 200) {
+      return remainder;
     }
   }
   return null;
+}
+
+// Cross-shadow visible-text reader. innerText computes rendered text across
+// open shadow roots; falls back to textContent for elements that don't expose
+// innerText (e.g. nodes outside the rendered tree in jsdom test environments).
+function readVisibleText(el: Element): string {
+  const innerText = (el as HTMLElement).innerText;
+  const t = (innerText ?? el.textContent ?? '').trim();
+  return t;
+}
+
+function readDiscordFromVisibleText(): string | null {
+  // SF Lightning renders a Contact's detail fields as `Label\nValue\nLabel\nValue…`
+  // in body.innerText. Require the literal token "Discord" on its own line so we
+  // don't grab "Edit Discord" (inline-edit button) or "Lior Discord Tool" (a
+  // company name embedded in a different field).
+  const text = document.body?.innerText ?? '';
+  const match = text.match(/(?:^|\n)\s*Discord\s*\n+\s*([^\n]+?)\s*(?:\n|$)/);
+  if (!match) return null;
+  const value = match[1].trim();
+  if (!value || value === '-' || value === '—' || value.length > 80) return null;
+  // Defensive: bail if the captured value looks like another field's label.
+  if (/^(Edit|Title|Phone|Email|Account|Owner|Department|Mailing|Other|Reports To|Birthdate)\b/i.test(value)) {
+    return null;
+  }
+  return value.replace(/^@/, '');
 }
 
 function findAllInShadow<T extends Element = HTMLElement>(selector: string): T[] {
@@ -475,4 +542,4 @@ function ensureToastContainer(): void {
   (document.body || document.documentElement).appendChild(toastContainer);
 }
 
-export const __testing__ = { parseLightningUrl, parseSFTitle, isBadAccountName };
+export const __testing__ = { parseLightningUrl, parseSFTitle, isBadAccountName, readDiscordFromVisibleText };

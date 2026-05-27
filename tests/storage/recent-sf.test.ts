@@ -32,9 +32,16 @@ describe('recent SF opportunities', () => {
     expect(list[0].account).toEqual({ id: '001AC', name: 'Acme Inc' });
   });
 
-  it('preserves a previously stored Account when a later visit has no account info', () => {
+  it('clears the stored Account when a later visit omits it — caller is responsible for explicit preserve', () => {
     recordVisit({ id: '006A', name: 'Acme', account: { id: '001AC', name: 'Acme Inc' } });
-    recordVisit({ id: '006A', name: 'Acme' }); // re-visit, no account passed
+    recordVisit({ id: '006A', name: 'Acme' }); // re-visit without account → clear
+    expect(listRecent()[0].account).toBeUndefined();
+  });
+
+  it('callers can preserve a stored Account by reading it first and passing it back explicitly', () => {
+    recordVisit({ id: '006A', name: 'Acme', account: { id: '001AC', name: 'Acme Inc' } });
+    const existingAccount = listRecent()[0].account;
+    recordVisit({ id: '006A', name: 'Acme', account: existingAccount });
     expect(listRecent()[0].account).toEqual({ id: '001AC', name: 'Acme Inc' });
   });
 

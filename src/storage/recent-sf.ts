@@ -26,6 +26,11 @@ export function listRecent(): RecentOpportunity[] {
 export interface OpportunityVisitInput {
   id: string;
   name: string;
+  // undefined means "no account on this record" — caller is responsible for
+  // distinguishing "keep existing" vs "clear" by reading existing first and
+  // passing the desired final value. We do NOT silently preserve a previously
+  // stored account here, because that prevents callers from clearing a
+  // detected-bad cached value.
   account?: { id: string; name: string };
 }
 
@@ -40,7 +45,7 @@ export function recordVisit(input: OpportunityVisitInput): void {
       ...existing[idx],
       name: input.name,
       lastFocusedAt: now,
-      account: input.account ?? existing[idx].account
+      account: input.account
     };
     existing.splice(idx, 1);
   } else {

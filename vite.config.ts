@@ -1,8 +1,8 @@
 import { defineConfig } from 'vite';
 import monkey from 'vite-plugin-monkey';
 
-const REPO_OWNER = 'CHANGE_ME';
-const REPO_NAME = 'discord-sf-logger';
+const REPO_OWNER = 'liortal-wolf';
+const REPO_NAME = 'sf-logger';
 const SCRIPT_FILENAME = 'discord-sf-logger.user.js';
 const RAW_URL = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/main/dist/${SCRIPT_FILENAME}`;
 

@@ -4,11 +4,15 @@
 # Validation screenshots (kept locally, not part of the product)
 *.png
 
-# Node / build outputs (will apply once implementation starts)
+# Node deps
 node_modules/
-dist/
 .env
 .env.local
+
+# Claude/superpowers internal planning docs (not for repo)
+docs/superpowers/
+
+# NOTE: dist/ IS committed — it's how users install via raw.githubusercontent.com
 
 # OS noise
 Thumbs.db
