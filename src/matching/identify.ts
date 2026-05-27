@@ -18,9 +18,7 @@ export function identifyTarget(input: IdentifyInput): IdentifyStrategy {
   }
 
   // Strategy 2: learned mapping (Discord counterparty → Opportunity)
-  // NOTE: getMappingFor will be updated to accept DiscordCounterparty in Task 9.
-  // For now, use the username string to keep TypeScript happy.
-  const mapping = getMappingFor(input.counterparty.username);
+  const mapping = getMappingFor(input.counterparty);
   if (mapping) {
     const record: RecentOpportunity = {
       id: mapping.oppId,

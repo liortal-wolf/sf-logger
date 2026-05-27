@@ -37,7 +37,7 @@ describe('identifyTarget strategy chain', () => {
   });
 
   it('falls back to learned-mapping when no open SF tab matches', () => {
-    recordMapping('joe_acme', '006Hu000ABC', 'Acme Q2 Renewal');
+    recordMapping({ username: 'joe_acme' }, '006Hu000ABC', 'Acme Q2 Renewal');
     const result = identifyTarget({ counterparty: { username: 'joe_acme' } });
     expect(result.kind).toBe('learned-mapping');
     if (result.kind === 'learned-mapping') {
@@ -69,7 +69,7 @@ describe('identifyTarget strategy chain', () => {
 
   it('prioritizes open-sf-tab over learned-mapping even when both exist', () => {
     recordVisit({ id: '006TAB', name: 'Currently Open Opp' });
-    recordMapping('joe', '006LEARNED', 'Learned Opp');
+    recordMapping({ username: 'joe' }, '006LEARNED', 'Learned Opp');
     const result = identifyTarget({ counterparty: { username: 'joe' } });
     expect(result.kind).toBe('open-sf-tab');
     if (result.kind === 'open-sf-tab') {
