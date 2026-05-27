@@ -542,4 +542,48 @@ function ensureToastContainer(): void {
   (document.body || document.documentElement).appendChild(toastContainer);
 }
 
-export const __testing__ = { parseLightningUrl, parseSFTitle, isBadAccountName, readDiscordFromVisibleText };
+// Pure parser, separated for unit testing — given any DOM root, find every
+// /Opportunity/<id> anchor and return its id + visible name (and, if siblings
+// expose Account / Stage cells, those too). Deduplicates by id.
+function parseContactRelatedOppsFromDom(root: ParentNode): Array<{
+  id: string;
+  name: string;
+  accountName?: string;
+  stage?: string;
+}> {
+  const anchors = Array.from(root.querySelectorAll<HTMLAnchorElement>('a[href*="/Opportunity/"]'));
+  const seen = new Map<string, { id: string; name: string; accountName?: string; stage?: string }>();
+  for (const a of anchors) {
+    // Use getAttribute to get the raw href (avoids browser absolute-URL
+    // resolution which can interfere with ID extraction in test environments).
+    const rawHref = a.getAttribute('href') ?? a.href;
+    const m = rawHref.match(/\/Opportunity\/([a-zA-Z0-9]{6,18})(?:\/|$)/);
+    if (!m) continue;
+    const id = m[1];
+    if (seen.has(id)) continue;
+    const name = readVisibleText(a);
+    if (!name) continue;
+    seen.set(id, { id, name });
+  }
+  return Array.from(seen.values());
+}
+
+// Live-page scraper used by the watcher. Walks shadow DOM (open shadow roots
+// only) to find the Opportunities related-list anchors, then delegates to the
+// pure parser for the actual extraction.
+function readContactRelatedOpps(): Array<{ id: string; name: string; accountName?: string; stage?: string }> {
+  const containers = findAllInShadow<HTMLElement>(
+    'force-related-list-single-container, lst-related-list-single-container, records-related-list-single-container, .forceRelatedList'
+  );
+  const fakeRoot = document.createElement('div');
+  for (const c of containers) fakeRoot.appendChild(c.cloneNode(true));
+  if (fakeRoot.children.length === 0) {
+    // Fallback: no specific container found — scan the whole document for
+    // Opportunity anchors (cheap; we already do shadow-piercing for accounts).
+    const allOppAnchors = findAllInShadow<HTMLAnchorElement>('a[href*="/Opportunity/"]');
+    for (const a of allOppAnchors) fakeRoot.appendChild(a.cloneNode(true));
+  }
+  return parseContactRelatedOppsFromDom(fakeRoot);
+}
+
+export const __testing__ = { parseLightningUrl, parseSFTitle, isBadAccountName, readDiscordFromVisibleText, parseContactRelatedOppsFromDom };
