@@ -51,7 +51,12 @@ export const popupHTML = (data: {
             `<option value="${escapeHTML(c.id)}" data-name="${escapeHTML(c.name)}">${escapeHTML(c.name)}</option>`
           ).join('')}
         </select>
-      ` : ''}
+      ` : `
+        <div class="dsfl-popup__empty-hint">
+          No tracked contacts yet. Open a Contact page in Salesforce (e.g. via the
+          "Search" bar) to add it here. Or paste a Contact ID below.
+        </div>
+      `}
       <input class="dsfl-popup__contact-id" data-action="contact-id" placeholder="Or paste Contact ID (e.g. 003Hu000XYZ)" />
     </div>
 

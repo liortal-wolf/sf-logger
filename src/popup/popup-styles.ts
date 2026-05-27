@@ -78,6 +78,9 @@ export const popupCSS = `
   font-size: 11px; color: #888; margin-top: 4px;
 }
 .dsfl-popup__hint--warn { color: #c47900; }
+.dsfl-popup__empty-hint {
+  font-size: 12px; color: #777; padding: 6px 0; line-height: 1.4;
+}
 .dsfl-popup__footer {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 12px 20px; border-top: 1px solid #eee;
