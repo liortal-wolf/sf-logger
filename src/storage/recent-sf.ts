@@ -77,7 +77,11 @@ export interface ContactVisitInput {
   id: string;
   name: string;
   discordUsername?: string;
+  discordUserId?: string;
+  opps?: Array<{ id: string; name: string; accountName?: string; stage?: string; lastSeenAt: string }>;
 }
+
+const MAX_OPPS_PER_CONTACT = 10;
 
 export function recordContactVisit(input: ContactVisitInput): void {
   const now = new Date().toISOString();
@@ -90,7 +94,9 @@ export function recordContactVisit(input: ContactVisitInput): void {
       ...existing[idx],
       name: input.name,
       lastFocusedAt: now,
-      discordUsername: input.discordUsername ?? existing[idx].discordUsername
+      discordUsername: input.discordUsername ?? existing[idx].discordUsername,
+      discordUserId: input.discordUserId ?? existing[idx].discordUserId,
+      opps: mergeOpps(existing[idx].opps, input.opps)
     };
     existing.splice(idx, 1);
   } else {
@@ -99,10 +105,32 @@ export function recordContactVisit(input: ContactVisitInput): void {
       name: input.name,
       visitedAt: now,
       lastFocusedAt: now,
-      discordUsername: input.discordUsername
+      discordUsername: input.discordUsername,
+      discordUserId: input.discordUserId,
+      opps: input.opps ? capOpps(input.opps) : undefined
     };
   }
 
   existing.unshift(updated);
   GM_setValue(CONTACTS_KEY, existing.slice(0, MAX_ENTRIES));
+}
+
+function mergeOpps(
+  existing: RecentContact['opps'],
+  incoming: ContactVisitInput['opps']
+): RecentContact['opps'] {
+  if (!incoming || incoming.length === 0) return existing;
+  const byId = new Map<string, NonNullable<RecentContact['opps']>[number]>();
+  for (const o of existing ?? []) byId.set(o.id, o);
+  for (const o of incoming) {
+    const prior = byId.get(o.id);
+    byId.set(o.id, { ...prior, ...o }); // later writes win on metadata
+  }
+  return capOpps(Array.from(byId.values()));
+}
+
+function capOpps(opps: NonNullable<RecentContact['opps']>): NonNullable<RecentContact['opps']> {
+  return [...opps]
+    .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))
+    .slice(0, MAX_OPPS_PER_CONTACT);
 }

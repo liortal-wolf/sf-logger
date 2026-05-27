@@ -114,4 +114,58 @@ describe('recent contacts', () => {
     expect(list.length).toBe(2);
     expect(list[0].id).toBe('003A');
   });
+
+  it('unions opps on repeat Contact visits, keyed by Opp id', () => {
+    recordContactVisit({
+      id: '003A',
+      name: 'Kesem',
+      opps: [
+        { id: '006A', name: 'Acme', lastSeenAt: '2026-05-27T10:00:00Z' }
+      ]
+    });
+    recordContactVisit({
+      id: '003A',
+      name: 'Kesem',
+      opps: [
+        { id: '006B', name: 'Beta', lastSeenAt: '2026-05-27T11:00:00Z' }
+      ]
+    });
+    const list = listRecentContacts();
+    expect(list[0].opps?.length).toBe(2);
+    const ids = list[0].opps?.map(o => o.id) ?? [];
+    expect(ids).toContain('006A');
+    expect(ids).toContain('006B');
+  });
+
+  it('later writes win on opp metadata (name, accountName, stage)', () => {
+    recordContactVisit({
+      id: '003A',
+      name: 'Kesem',
+      opps: [{ id: '006A', name: 'Old Name', lastSeenAt: '2026-05-27T10:00:00Z' }]
+    });
+    recordContactVisit({
+      id: '003A',
+      name: 'Kesem',
+      opps: [{ id: '006A', name: 'New Name', accountName: 'Acme', stage: 'Prospecting', lastSeenAt: '2026-05-27T11:00:00Z' }]
+    });
+    const opp = listRecentContacts()[0].opps?.find(o => o.id === '006A');
+    expect(opp?.name).toBe('New Name');
+    expect(opp?.accountName).toBe('Acme');
+    expect(opp?.stage).toBe('Prospecting');
+  });
+
+  it('caps opps per Contact at 10, dropping the oldest by lastSeenAt', () => {
+    const opps = Array.from({ length: 12 }, (_, i) => ({
+      id: `006${String(i).padStart(2, '0')}`,
+      name: `Opp ${i}`,
+      lastSeenAt: `2026-05-${String(10 + i).padStart(2, '0')}T00:00:00Z`
+    }));
+    recordContactVisit({ id: '003A', name: 'Kesem', opps });
+    const stored = listRecentContacts()[0].opps ?? [];
+    expect(stored.length).toBe(10);
+    const ids = stored.map(o => o.id);
+    expect(ids).not.toContain('00600'); // oldest dropped
+    expect(ids).not.toContain('00601');
+    expect(ids).toContain('00611'); // newest kept
+  });
 });
