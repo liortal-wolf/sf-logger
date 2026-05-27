@@ -228,25 +228,41 @@ function readLinkedAccount(): { name: string; id: string } | null {
     const idMatch = link.href.match(/\/Account\/([a-zA-Z0-9]{11,18})/);
     const id = idMatch?.[1] ?? '';
 
-    if (!id || !text) return { link, text, id, score: 9999 };
-    if (isBadAccountName(text)) return { link, text, id, score: 9999 };
+    if (!id || !text) return { link, text, id, score: 9999, reason: 'no id/text' };
+    if (isBadAccountName(text)) return { link, text, id, score: 9999, reason: 'bad text' };
 
     let score = 0;
+    const reasons: string[] = [];
 
-    // Strongly prefer links in the page-header highlights area
     const loc = locateAnchor(link);
-    if (loc === 'highlights') score -= 50;
-    else if (loc === 'related-list') score += 100;
+    if (loc === 'highlights') { score -= 50; reasons.push('highlights'); }
+    else if (loc === 'related-list') { score += 100; reasons.push('related-list'); }
+    else reasons.push('other-location');
 
-    // Prefer truly canonical /view URLs with no query/hash after "view"
-    if (/\/Account\/[a-zA-Z0-9]+\/view\s*$/.test(link.href)) score -= 10;
-    else if (/\/Account\/[a-zA-Z0-9]+\/view\?/.test(link.href)) score += 30;
-    else if (/\/Account\/[a-zA-Z0-9]+\/related\//.test(link.href)) score += 100;
+    if (/\/Account\/[a-zA-Z0-9]+\/view\s*$/.test(link.href)) { score -= 10; reasons.push('clean-view'); }
+    else if (/\/Account\/[a-zA-Z0-9]+\/view\?/.test(link.href)) { score += 30; reasons.push('view-with-query'); }
+    else if (/\/Account\/[a-zA-Z0-9]+\/related\//.test(link.href)) { score += 100; reasons.push('related-path'); }
+    else reasons.push('other-href');
 
-    return { link, text, id, score };
+    return { link, text, id, score, reason: reasons.join(',') };
   });
 
   scored.sort((a, b) => a.score - b.score);
+
+  // Diagnostic logging so the user can paste back what the scraper sees if
+  // it picks the wrong link.
+  if (scored.length > 0) {
+    console.log(
+      '[discord-sf-logger] account candidates:',
+      scored.slice(0, 6).map(c => ({
+        text: c.text,
+        href: c.link.href,
+        score: c.score,
+        reason: c.reason
+      }))
+    );
+  }
+
   const best = scored[0];
   if (!best || best.score >= 100) return null;
   return { name: best.text, id: best.id };
