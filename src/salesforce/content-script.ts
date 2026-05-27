@@ -221,6 +221,7 @@ function locateAnchor(link: Element): 'highlights' | 'related-list' | 'other' {
 }
 
 function readLinkedAccount(): { name: string; id: string } | null {
+  // Strategy 1: find an actual <a> element pointing at /Account/<id> and score it
   const candidates = findAllAccountLinks();
 
   const scored = candidates.map(link => {
@@ -249,23 +250,78 @@ function readLinkedAccount(): { name: string; id: string } | null {
 
   scored.sort((a, b) => a.score - b.score);
 
-  // Diagnostic logging so the user can paste back what the scraper sees if
-  // it picks the wrong link.
-  if (scored.length > 0) {
-    console.log(
-      '[discord-sf-logger] account candidates:',
-      scored.slice(0, 6).map(c => ({
-        text: c.text,
-        href: c.link.href,
-        score: c.score,
-        reason: c.reason
-      }))
-    );
-  }
+  console.log(
+    `[discord-sf-logger] account candidates: ${scored.length} found`,
+    scored.slice(0, 6).map(c => ({
+      text: c.text,
+      href: c.link.href,
+      score: c.score,
+      reason: c.reason
+    }))
+  );
 
   const best = scored[0];
-  if (!best || best.score >= 100) return null;
-  return { name: best.text, id: best.id };
+  if (best && best.score < 100) {
+    return { name: best.text, id: best.id };
+  }
+
+  // Strategy 2: fallback — look for the "Account Name" labeled field
+  // anywhere on the page (including in shadow DOM) and read its visible value.
+  // SF sometimes renders the lookup name inside a closed shadow root we can't
+  // pierce; the label-and-value pair is often projected to light DOM via slots.
+  const fromLabel = readAccountFromLabeledField();
+  if (fromLabel) {
+    console.log('[discord-sf-logger] account captured via label fallback:', fromLabel);
+    return fromLabel;
+  }
+
+  return null;
+}
+
+// Walk shadow DOM looking for a form-element / layout-item whose label
+// contains "Account Name", then extract any /Account/<id> URL from descendant
+// hrefs OR the visible name text from the value cell. Either piece alone is
+// useful — a name without an id can still go in the popup.
+function readAccountFromLabeledField(): { name: string; id: string } | null {
+  const items = findAllInShadow<HTMLElement>(
+    'records-record-layout-item, ' +
+    'records-highlights-details-item, ' +
+    'force-record-layout-item, ' +
+    '.slds-form-element'
+  );
+
+  for (const item of items) {
+    const labelEl = item.querySelector('.slds-form-element__label, .test-id__field-label, label, .field-label');
+    const label = labelEl?.textContent?.trim().toLowerCase();
+    if (label !== 'account name' && label !== 'account') continue;
+
+    // Look at any anchor with /Account/<id> inside this field's container.
+    let id = '';
+    const innerAnchor = item.querySelector<HTMLAnchorElement>('a[href*="/Account/"]');
+    if (innerAnchor) {
+      const m = innerAnchor.href.match(/\/Account\/([a-zA-Z0-9]{11,18})/);
+      if (m) id = m[1];
+    }
+
+    // Visible name lives in the value cell — try several selectors.
+    const valueEl = item.querySelector(
+      'a[href*="/Account/"], ' +
+      'records-formula-output, ' +
+      'lightning-formatted-text, ' +
+      'lightning-formatted-name, ' +
+      '.slds-form-element__static, ' +
+      '.test-id__field-value, ' +
+      'records-output-field'
+    );
+    const text = valueEl?.textContent?.trim();
+
+    if (text && text.length > 0 && !isBadAccountName(text)) {
+      if (id) return { name: text, id };
+      console.log('[discord-sf-logger] account name found but no id; storing name only', text);
+      return { name: text, id: '' };
+    }
+  }
+  return null;
 }
 
 // Scrape the "Discord" custom field value from a Contact detail page. Looks
