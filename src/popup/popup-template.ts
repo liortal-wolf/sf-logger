@@ -7,7 +7,7 @@ export const popupHTML = (data: {
   pickerChoices: Array<{ id: string; name: string; accountName?: string }>;
   showPicker: boolean;
   showManual: boolean;
-  contactChoices: Array<{ id: string; name: string }>;
+  contactChoices: Array<{ id: string; name: string; discordUsername?: string }>;
 }) => `
 <div class="dsfl-popup">
   <header class="dsfl-popup__header">
@@ -47,9 +47,12 @@ export const popupHTML = (data: {
       ${data.contactChoices.length > 0 ? `
         <select class="dsfl-popup__contact-picker" data-action="pick-contact">
           <option value="">No contact</option>
-          ${data.contactChoices.map(c =>
-            `<option value="${escapeHTML(c.id)}" data-name="${escapeHTML(c.name)}">${escapeHTML(c.name)}</option>`
-          ).join('')}
+          ${data.contactChoices.map(c => {
+            const label = c.discordUsername
+              ? `${c.name} — @${c.discordUsername}`
+              : c.name;
+            return `<option value="${escapeHTML(c.id)}" data-name="${escapeHTML(c.name)}">${escapeHTML(label)}</option>`;
+          }).join('')}
         </select>
       ` : `
         <div class="dsfl-popup__empty-hint">

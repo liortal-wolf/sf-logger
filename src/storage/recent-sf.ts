@@ -71,6 +71,7 @@ export function listRecentContacts(): RecentContact[] {
 export interface ContactVisitInput {
   id: string;
   name: string;
+  discordUsername?: string;
 }
 
 export function recordContactVisit(input: ContactVisitInput): void {
@@ -80,14 +81,20 @@ export function recordContactVisit(input: ContactVisitInput): void {
 
   let updated: RecentContact;
   if (idx >= 0) {
-    updated = { ...existing[idx], name: input.name, lastFocusedAt: now };
+    updated = {
+      ...existing[idx],
+      name: input.name,
+      lastFocusedAt: now,
+      discordUsername: input.discordUsername ?? existing[idx].discordUsername
+    };
     existing.splice(idx, 1);
   } else {
     updated = {
       id: input.id,
       name: input.name,
       visitedAt: now,
-      lastFocusedAt: now
+      lastFocusedAt: now,
+      discordUsername: input.discordUsername
     };
   }
 

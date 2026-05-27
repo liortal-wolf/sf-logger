@@ -6,7 +6,7 @@ export interface PopupInput {
   strategy: IdentifyStrategy;
   initialSubject: string;
   initialDescription: string;
-  contactChoices: Array<{ id: string; name: string }>;
+  contactChoices: Array<{ id: string; name: string; discordUsername?: string }>;
 }
 
 export interface PopupResult {

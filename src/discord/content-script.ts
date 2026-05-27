@@ -59,7 +59,7 @@ async function handleLogClick(): Promise<void> {
 
   const contactChoices = listRecentContacts()
     .slice(0, 10)
-    .map(r => ({ id: r.id, name: r.name }));
+    .map(r => ({ id: r.id, name: r.name, discordUsername: r.discordUsername }));
 
   const result = await showPopup({
     strategy,

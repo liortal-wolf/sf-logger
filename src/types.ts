@@ -22,6 +22,7 @@ export interface RecentContact {
   name: string;
   visitedAt: string;
   lastFocusedAt: string;
+  discordUsername?: string;  // value of the "Discord" custom field on the Contact, if present
 }
 
 // Back-compat alias so older imports keep compiling. Prefer RecentOpportunity

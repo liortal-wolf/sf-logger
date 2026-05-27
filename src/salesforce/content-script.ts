@@ -1,4 +1,4 @@
-import { recordVisit, listRecent, recordContactVisit } from '../storage/recent-sf';
+import { recordVisit, listRecent, recordContactVisit, listRecentContacts } from '../storage/recent-sf';
 
 const POLL_INTERVAL_MS = 2000;
 const PENDING_FILL_KEY = 'pending_task_fill';
@@ -8,9 +8,12 @@ interface PendingTaskFill {
   expiresAt: number;
 }
 
-// Anchors whose visible text is "Foo Bar(N)" — used to filter out related-list
-// shortcut links when we scrape the Account name.
-const RELATED_LIST_TEXT_RE = /\(\s*\d+\s*\)\s*$/;
+// Patterns that indicate a link is NOT the canonical Account name link:
+//   "Account Team(0)"  → related-list count suffix
+//   "View All", "View AllOpportunities", "Edit", "Add" → action button labels
+const RELATED_LIST_COUNT_RE = /\(\s*\d+\s*\)\s*$/;
+const ACTION_LABEL_RE = /^(View|Add|Edit|New|Delete|Show|Hide|Clone|Share|Print|Export|Import|Manage|All|Save|Cancel)\b/i;
+const RELATED_LIST_LABEL_RE = /^(Account Team|Contact Roles|Notes|Files|Activity|Activities|Cases|Opportunities|Tasks|Events|Campaign History|Quotes|Orders)\b/i;
 
 export function startSalesforceWatcher(): void {
   const tick = () => {
@@ -18,9 +21,6 @@ export function startSalesforceWatcher(): void {
     if (page) {
       if (page.type === 'Opportunity') updateOpportunity(page.id);
       else if (page.type === 'Contact') updateContact(page.id);
-      // Standalone Account visits are intentionally NOT tracked — the Account
-      // lives inline on its Opportunity, so we only care about an Account name
-      // when scraping it from an Opp page.
     }
     tryFillPendingTask();
   };
@@ -38,25 +38,19 @@ function updateOpportunity(id: string): void {
 
   const existing = listRecent().find(r => r.id === id);
   const hasGoodName = existing && existing.name !== existing.id;
-  const cachedAccountIsBad =
-    !!existing?.account?.name && RELATED_LIST_TEXT_RE.test(existing.account.name);
+  const cachedAccountIsBad = existing?.account?.name ? isBadAccountName(existing.account.name) : false;
 
   const shouldUpdate =
     !existing ||
     (name && !hasGoodName) ||
     (account && (!existing.account || cachedAccountIsBad)) ||
-    cachedAccountIsBad; // always try to fix a known-bad cached value
+    cachedAccountIsBad;
 
   if (!shouldUpdate) {
-    recordVisit({ id, name: existing.name, account: existing.account });
+    recordVisit({ id, name: existing!.name, account: existing!.account });
     return;
   }
 
-  // Decide what account info to persist:
-  //  - prefer freshly-scraped account
-  //  - if we have nothing fresh AND the existing cached value is "bad" ("(N)"
-  //    pattern), drop it rather than re-persisting bad data
-  //  - otherwise keep the existing one
   const finalAccount =
     account ?? (cachedAccountIsBad ? undefined : existing?.account);
 
@@ -72,20 +66,44 @@ function updateOpportunity(id: string): void {
     if (finalAccount?.name) parts.push(`(${finalAccount.name})`);
     showToast(`Cached Opportunity ${parts.join(' ')}`, 'success');
   } else if (!account) {
-    console.log(`[discord-sf-logger] no linked Account found yet for Opp ${id} — will keep trying`);
+    console.log(`[discord-sf-logger] no canonical Account link found yet for Opp ${id} — will keep trying`);
   }
 }
 
 function updateContact(id: string): void {
   const name = readRecordName();
-  const existing = listRecent(); // not relevant — contacts are separate
-  void existing;
+  const discordUsername = readContactDiscordUsername();
 
-  const finalName = name ?? id;
-  recordContactVisit({ id, name: finalName });
+  const existing = listRecentContacts().find(c => c.id === id);
+  const hasGoodName = existing && existing.name !== existing.id;
+  const hasDiscordUsername = !!existing?.discordUsername;
 
-  if (name) {
-    showToast(`Cached Contact: ${name}`, 'success');
+  const shouldUpdate =
+    !existing ||
+    (name && !hasGoodName) ||
+    (discordUsername && !hasDiscordUsername);
+
+  if (!shouldUpdate) {
+    // Bump lastFocusedAt only (recordContactVisit always does that)
+    recordContactVisit({
+      id,
+      name: existing!.name,
+      discordUsername: existing!.discordUsername
+    });
+    return;
+  }
+
+  recordContactVisit({
+    id,
+    name: name ?? existing?.name ?? id,
+    discordUsername: discordUsername ?? existing?.discordUsername
+  });
+
+  if (!existing || (name && !hasGoodName) || (discordUsername && !hasDiscordUsername)) {
+    const parts: string[] = [];
+    if (name) parts.push(name);
+    if (discordUsername) parts.push(`(@${discordUsername})`);
+    showToast(`Cached Contact ${parts.join(' ')}`, 'success');
   }
 }
 
@@ -134,6 +152,15 @@ function looksLikeSFId(s: string): boolean {
   return /^[a-zA-Z0-9]{15,18}$/.test(s);
 }
 
+function isBadAccountName(s: string): boolean {
+  return (
+    RELATED_LIST_COUNT_RE.test(s) ||
+    ACTION_LABEL_RE.test(s) ||
+    RELATED_LIST_LABEL_RE.test(s) ||
+    looksLikeSFId(s)
+  );
+}
+
 function findAllAccountLinks(): HTMLAnchorElement[] {
   const results: HTMLAnchorElement[] = [];
   const visited = new WeakSet<Element | Document | ShadowRoot>();
@@ -157,25 +184,64 @@ function findAllAccountLinks(): HTMLAnchorElement[] {
   return results;
 }
 
+// Walk up through both regular parents and shadow DOM hosts to find where
+// the anchor lives. Page-header (highlights) is where the canonical Account
+// name link lives. Related-list view-manager wrappers indicate related-list
+// shortcut links we want to avoid.
+function locateAnchor(link: Element): 'highlights' | 'related-list' | 'other' {
+  let el: Node | null = link;
+  while (el) {
+    if (el instanceof Element) {
+      const tag = el.tagName.toUpperCase();
+      if (
+        tag === 'RECORDS-HIGHLIGHTS2' ||
+        tag === 'FORCE-HIGHLIGHTS' ||
+        el.classList.contains('slds-page-header')
+      ) {
+        return 'highlights';
+      }
+      if (
+        tag.startsWith('FORCE-RELATED-LIST') ||
+        tag === 'FORCE-LST-COMMON-LIST-VIEW' ||
+        el.classList.contains('slds-card') && el.querySelector('header')?.textContent?.match(/\(\d+\)/)
+      ) {
+        return 'related-list';
+      }
+    }
+    const root = (el as Node).getRootNode();
+    if (root instanceof ShadowRoot) {
+      el = root.host;
+    } else if (el instanceof Element) {
+      el = el.parentElement;
+    } else {
+      el = null;
+    }
+  }
+  return 'other';
+}
+
 function readLinkedAccount(): { name: string; id: string } | null {
   const candidates = findAllAccountLinks();
 
-  // Score each candidate; lower score = better. Canonical /view links beat
-  // /related/<list>/view shortcut links; clean text beats "(N)" suffixes.
   const scored = candidates.map(link => {
     const text = link.textContent?.trim() ?? '';
     const idMatch = link.href.match(/\/Account\/([a-zA-Z0-9]{11,18})/);
     const id = idMatch?.[1] ?? '';
 
-    if (!id || !text || looksLikeSFId(text)) return { link, text, id, score: 999 };
+    if (!id || !text) return { link, text, id, score: 9999 };
+    if (isBadAccountName(text)) return { link, text, id, score: 9999 };
 
     let score = 0;
-    // canonical /view URL strongly preferred
-    if (!/\/Account\/[a-zA-Z0-9]+\/view(?:\?|$|#)/.test(link.href)) score += 10;
-    // related-list shortcut text is disqualifying
-    if (RELATED_LIST_TEXT_RE.test(text)) score += 100;
-    // text shouldn't be a known related-list label
-    if (/^(Account Team|Contact Roles|Notes|Files|Activity|Activities|Cases|Opportunities)/i.test(text)) score += 50;
+
+    // Strongly prefer links in the page-header highlights area
+    const loc = locateAnchor(link);
+    if (loc === 'highlights') score -= 50;
+    else if (loc === 'related-list') score += 100;
+
+    // Prefer truly canonical /view URLs with no query/hash after "view"
+    if (/\/Account\/[a-zA-Z0-9]+\/view\s*$/.test(link.href)) score -= 10;
+    else if (/\/Account\/[a-zA-Z0-9]+\/view\?/.test(link.href)) score += 30;
+    else if (/\/Account\/[a-zA-Z0-9]+\/related\//.test(link.href)) score += 100;
 
     return { link, text, id, score };
   });
@@ -184,6 +250,48 @@ function readLinkedAccount(): { name: string; id: string } | null {
   const best = scored[0];
   if (!best || best.score >= 100) return null;
   return { name: best.text, id: best.id };
+}
+
+// Scrape the "Discord" custom field value from a Contact detail page. Looks
+// for a layout item whose label is exactly "Discord" and reads the rendered
+// value (lightning-formatted-text or similar).
+function readContactDiscordUsername(): string | null {
+  const items = findAllInShadow<HTMLElement>(
+    'records-record-layout-item, .slds-form-element, force-record-layout-row > *'
+  );
+  for (const item of items) {
+    const labelEl = item.querySelector('.slds-form-element__label, .test-id__field-label, label');
+    const label = labelEl?.textContent?.trim().toLowerCase();
+    if (label !== 'discord') continue;
+
+    const valueEl = item.querySelector(
+      'lightning-formatted-text, ' +
+      '.slds-form-element__static, ' +
+      '.test-id__field-value, ' +
+      'records-output-field'
+    );
+    const value = valueEl?.textContent?.trim();
+    if (value && value.length > 0 && value !== '-' && value !== '—') {
+      return value.replace(/^@/, ''); // store without leading @
+    }
+  }
+  return null;
+}
+
+function findAllInShadow<T extends Element = HTMLElement>(selector: string): T[] {
+  const results: T[] = [];
+  const visited = new WeakSet<Element | Document | ShadowRoot>();
+  const walk = (root: Document | ShadowRoot) => {
+    if (visited.has(root)) return;
+    visited.add(root);
+    for (const el of Array.from(root.querySelectorAll<T>(selector))) results.push(el);
+    for (const el of Array.from(root.querySelectorAll('*'))) {
+      const sr = (el as Element).shadowRoot;
+      if (sr) walk(sr);
+    }
+  };
+  walk(document);
+  return results;
 }
 
 // ---------- Auto-fill Task/new Comments ----------
@@ -213,33 +321,14 @@ function tryFillPendingTask(): void {
 }
 
 function findCommentsTextarea(): HTMLTextAreaElement | null {
-  const all: HTMLTextAreaElement[] = [];
-  const visited = new WeakSet<Element | Document | ShadowRoot>();
-
-  const walk = (root: Document | ShadowRoot) => {
-    if (visited.has(root)) return;
-    visited.add(root);
-
-    for (const ta of Array.from(root.querySelectorAll<HTMLTextAreaElement>('textarea'))) {
-      all.push(ta);
-    }
-
-    for (const el of Array.from(root.querySelectorAll('*'))) {
-      const sr = (el as Element).shadowRoot;
-      if (sr) walk(sr);
-    }
-  };
-  walk(document);
-
+  const all = findAllInShadow<HTMLTextAreaElement>('textarea');
   if (all.length === 0) return null;
   if (all.length === 1) return all[0];
 
   for (const ta of all) {
     const container = ta.closest('lightning-textarea, [data-target-selection-name*="Description"], .slds-form-element');
     const label = container?.textContent?.toLowerCase() ?? '';
-    if (label.includes('comment') || label.includes('description')) {
-      return ta;
-    }
+    if (label.includes('comment') || label.includes('description')) return ta;
   }
 
   all.sort((a, b) => (b.rows ?? 0) - (a.rows ?? 0));
@@ -247,15 +336,10 @@ function findCommentsTextarea(): HTMLTextAreaElement | null {
 }
 
 function setNativeValue(el: HTMLTextAreaElement | HTMLInputElement, value: string): void {
-  const proto = el.tagName === 'TEXTAREA'
-    ? HTMLTextAreaElement.prototype
-    : HTMLInputElement.prototype;
+  const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-  if (descriptor?.set) {
-    descriptor.set.call(el, value);
-  } else {
-    el.value = value;
-  }
+  if (descriptor?.set) descriptor.set.call(el, value);
+  else el.value = value;
   el.dispatchEvent(new Event('input', { bubbles: true }));
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
@@ -319,4 +403,4 @@ function ensureToastContainer(): void {
   (document.body || document.documentElement).appendChild(toastContainer);
 }
 
-export const __testing__ = { parseLightningUrl, parseSFTitle };
+export const __testing__ = { parseLightningUrl, parseSFTitle, isBadAccountName };
