@@ -33,4 +33,21 @@ export function registerSettingsMenu(): void {
     setSetting('subjectPrefix', next);
     alert('Subject prefix saved.');
   });
+
+  GM_registerMenuCommand('Discord → SF: Clear local cache', () => {
+    const ok = confirm(
+      'Clear all local Discord-SF Logger caches?\n\n' +
+      'Will delete:\n' +
+      '  • recent_sf_records (visited Opps + cached related Contacts)\n' +
+      '  • recent_contacts (visited Contacts + cached related Opps + Discord handles)\n' +
+      '  • learned_mappings (Discord counterparty → Opp memory)\n\n' +
+      'Settings (API key, SF domain, subject prefix) are preserved.'
+    );
+    if (!ok) return;
+    GM_deleteValue('recent_sf_records');
+    GM_deleteValue('recent_contacts');
+    GM_deleteValue('learned_mappings');
+    console.log('[discord-sf-logger] local cache cleared');
+    alert('Local cache cleared. Tool will rebuild as you browse Salesforce.');
+  });
 }
