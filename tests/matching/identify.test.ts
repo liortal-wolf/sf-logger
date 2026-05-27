@@ -1,5 +1,25 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { normalizeDiscordHandle } from '../../src/matching/identify';
 import { identifyTarget } from '../../src/matching/identify';
+
+describe('normalizeDiscordHandle', () => {
+  it('lowercases', () => {
+    expect(normalizeDiscordHandle('KESEM')).toBe('kesem');
+  });
+  it('strips a leading @', () => {
+    expect(normalizeDiscordHandle('@kesem')).toBe('kesem');
+  });
+  it('trims surrounding whitespace', () => {
+    expect(normalizeDiscordHandle('  kesem  ')).toBe('kesem');
+  });
+  it('combines all three normalizations', () => {
+    expect(normalizeDiscordHandle('  @Kesem  ')).toBe('kesem');
+  });
+  it('returns empty string for empty input', () => {
+    expect(normalizeDiscordHandle('')).toBe('');
+    expect(normalizeDiscordHandle('   ')).toBe('');
+  });
+});
 import { recordVisit } from '../../src/storage/recent-sf';
 import { recordMapping } from '../../src/storage/mappings';
 

@@ -2,6 +2,10 @@ import type { IdentifyStrategy, RecentOpportunity } from '../types';
 import { getMostRecentlyFocused, listRecent } from '../storage/recent-sf';
 import { getMappingFor } from '../storage/mappings';
 
+export function normalizeDiscordHandle(s: string): string {
+  return s.trim().replace(/^@/, '').toLowerCase();
+}
+
 export interface IdentifyInput {
   counterparty: string;
 }
