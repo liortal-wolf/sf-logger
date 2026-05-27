@@ -4,37 +4,39 @@ export interface LearnedMapping {
   lastUsed: string; // ISO 8601
 }
 
-// One entry per Opportunity visited in Salesforce. Account info is nested
-// inline because there's a 1:1 relationship Opp → Account, and the picker
-// is Opportunity-centric (you log activities against Opps, not Accounts).
 export interface RecentOpportunity {
   id: string;
   name: string;
   visitedAt: string;       // ISO 8601
   lastFocusedAt: string;   // ISO 8601
   account?: { id: string; name: string };
+  contacts?: Array<{ id: string; name: string; lastSeenAt: string }>;
 }
 
-// Contacts are tracked separately because they have an M:N relationship with
-// Opportunities — a Contact can appear on multiple deals.
 export interface RecentContact {
   id: string;
   name: string;
   visitedAt: string;
   lastFocusedAt: string;
-  discordUsername?: string;  // value of the "Discord" custom field on the Contact, if present
+  discordUsername?: string;
+  discordUserId?: string;
+  opps?: Array<{
+    id: string;
+    name: string;
+    accountName?: string;
+    stage?: string;
+    lastSeenAt: string;
+  }>;
 }
 
-// Back-compat alias so older imports keep compiling. Prefer RecentOpportunity
-// in new code.
 export type RecentSFRecord = RecentOpportunity;
 
 export interface Settings {
   anthropicApiKey: string;
-  anthropicModel: string;          // default: 'claude-haiku-4-5-20251001'
-  subjectPrefix: string;           // default: 'Discord: '
-  skipPopupWhenConfident: boolean; // default: false
-  sfDomain: string;                // e.g. 'overwolf.lightning.force.com'
+  anthropicModel: string;
+  subjectPrefix: string;
+  skipPopupWhenConfident: boolean;
+  sfDomain: string;
 }
 
 export interface CapturedDiscordContext {
@@ -49,8 +51,18 @@ export interface SummarizedConversation {
   description: string;
 }
 
+export interface DiscordCounterparty {
+  username: string;
+  userId?: string;
+}
+
 export type IdentifyStrategy =
   | { kind: 'open-sf-tab'; record: RecentOpportunity }
   | { kind: 'learned-mapping'; record: RecentOpportunity }
+  | {
+      kind: 'contact-scoped-picker';
+      contact: { id: string; name: string; discordUsername?: string; discordUserId?: string };
+      choices: Array<{ id: string; name: string; accountName?: string; stage?: string }>;
+    }
   | { kind: 'picker'; choices: RecentOpportunity[] }
   | { kind: 'manual' };
