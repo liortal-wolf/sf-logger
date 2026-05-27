@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discord → Salesforce Logger
 // @namespace    https://github.com/liortal-wolf/sf-logger
-// @version      0.1.0
+// @version      0.2.0
 // @author       Overwolf
 // @description  Log highlighted Discord conversations to Salesforce Opportunities with AI summaries
 // @supportURL   https://github.com/liortal-wolf/sf-logger/issues
@@ -69,6 +69,24 @@
 	function detectCounterpartyFromDocumentTitle(title) {
 		const match = title.match(/@([a-zA-Z0-9_.]+)\s*-\s*Discord$/);
 		return match ? match[1] : "";
+	}
+	function detectCounterparty(currentUserId) {
+		const username = detectCounterpartyFromDocumentTitle(document.title);
+		const userId = pickCounterpartyUserId(currentUserId);
+		if (!username && !userId) return null;
+		return {
+			username,
+			userId
+		};
+	}
+	function pickCounterpartyUserId(currentUserId) {
+		const messages = Array.from(document.querySelectorAll("[data-author-id]"));
+		const ids = new Set();
+		for (const m of messages) {
+			const id = m.getAttribute("data-author-id");
+			if (id && id !== currentUserId) ids.add(id);
+		}
+		if (ids.size === 1) return Array.from(ids)[0];
 	}
 	function captureDiscordTranscript() {
 		const selection = window.getSelection();
@@ -246,9 +264,11 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			account: r.account ?? (r.accountId && r.accountName ? {
 				id: r.accountId,
 				name: r.accountName
-			} : void 0)
+			} : void 0),
+			contacts: r.contacts
 		}));
 	}
+	var MAX_CONTACTS_PER_OPP = 10;
 	function recordVisit(input) {
 		const now = new Date().toISOString();
 		const existing = listRecent();
@@ -259,7 +279,8 @@ Output only the JSON object. No markdown fences. No commentary.`;
 				...existing[idx],
 				name: input.name,
 				lastFocusedAt: now,
-				account: input.account
+				account: input.account,
+				contacts: mergeContacts(existing[idx].contacts, input.contacts)
 			};
 			existing.splice(idx, 1);
 		} else updated = {
@@ -267,10 +288,27 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			name: input.name,
 			visitedAt: now,
 			lastFocusedAt: now,
-			account: input.account
+			account: input.account,
+			contacts: input.contacts ? capContacts(input.contacts) : void 0
 		};
 		existing.unshift(updated);
 		GM_setValue(OPPS_KEY, existing.slice(0, MAX_ENTRIES));
+	}
+	function mergeContacts(existing, incoming) {
+		if (!incoming || incoming.length === 0) return existing;
+		const byId = new Map();
+		for (const c of existing ?? []) byId.set(c.id, c);
+		for (const c of incoming) {
+			const prior = byId.get(c.id);
+			byId.set(c.id, {
+				...prior,
+				...c
+			});
+		}
+		return capContacts(Array.from(byId.values()));
+	}
+	function capContacts(contacts) {
+		return [...contacts].sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt)).slice(0, MAX_CONTACTS_PER_OPP);
 	}
 	function getMostRecentlyFocused() {
 		return listRecent()[0] ?? null;
@@ -278,6 +316,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 	function listRecentContacts() {
 		return GM_getValue(CONTACTS_KEY, []);
 	}
+	var MAX_OPPS_PER_CONTACT = 10;
 	function recordContactVisit(input) {
 		const now = new Date().toISOString();
 		const existing = listRecentContacts();
@@ -288,7 +327,9 @@ Output only the JSON object. No markdown fences. No commentary.`;
 				...existing[idx],
 				name: input.name,
 				lastFocusedAt: now,
-				discordUsername: input.discordUsername ?? existing[idx].discordUsername
+				discordUsername: input.discordUsername ?? existing[idx].discordUsername,
+				discordUserId: input.discordUserId ?? existing[idx].discordUserId,
+				opps: mergeOpps(existing[idx].opps, input.opps)
 			};
 			existing.splice(idx, 1);
 		} else updated = {
@@ -296,26 +337,65 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			name: input.name,
 			visitedAt: now,
 			lastFocusedAt: now,
-			discordUsername: input.discordUsername
+			discordUsername: input.discordUsername,
+			discordUserId: input.discordUserId,
+			opps: input.opps ? capOpps(input.opps) : void 0
 		};
 		existing.unshift(updated);
 		GM_setValue(CONTACTS_KEY, existing.slice(0, MAX_ENTRIES));
 	}
+	function mergeOpps(existing, incoming) {
+		if (!incoming || incoming.length === 0) return existing;
+		const byId = new Map();
+		for (const o of existing ?? []) byId.set(o.id, o);
+		for (const o of incoming) {
+			const prior = byId.get(o.id);
+			byId.set(o.id, {
+				...prior,
+				...o
+			});
+		}
+		return capOpps(Array.from(byId.values()));
+	}
+	function capOpps(opps) {
+		return [...opps].sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt)).slice(0, MAX_OPPS_PER_CONTACT);
+	}
 	var STORAGE_KEY = "learned_mappings";
+	function userIdKey(userId) {
+		return `uid:${userId}`;
+	}
+	function usernameKey(username) {
+		return `un:${normalizeDiscordHandle(username)}`;
+	}
 	function listMappings() {
 		return GM_getValue(STORAGE_KEY, {});
 	}
-	function getMappingFor(discordUsername) {
-		return listMappings()[discordUsername] ?? null;
-	}
-	function recordMapping(discordUsername, oppId, oppName) {
+	function getMappingFor(cp) {
 		const all = listMappings();
-		all[discordUsername] = {
+		if (cp.userId) {
+			const byId = all[userIdKey(cp.userId)];
+			if (byId) return byId;
+		}
+		if (cp.username) {
+			const byName = all[usernameKey(cp.username)];
+			if (byName) return byName;
+		}
+		return null;
+	}
+	function recordMapping(cp, oppId, oppName) {
+		const all = listMappings();
+		const entry = {
 			oppId,
 			oppName,
 			lastUsed: new Date().toISOString()
 		};
+		if (cp.userId) all[userIdKey(cp.userId)] = entry;
+		else if (cp.username) all[usernameKey(cp.username)] = entry;
+		else return;
 		GM_setValue(STORAGE_KEY, all);
+	}
+	function normalizeDiscordHandle(s) {
+		return s.trim().replace(/^@/, "").toLowerCase();
 	}
 	function identifyTarget(input) {
 		const openOpp = getMostRecentlyFocused();
@@ -333,12 +413,38 @@ Output only the JSON object. No markdown fences. No commentary.`;
 				lastFocusedAt: mapping.lastUsed
 			}
 		};
+		const contact = findContactForCounterparty(input.counterparty);
+		if (contact && contact.opps && contact.opps.length > 0) return {
+			kind: "contact-scoped-picker",
+			contact: {
+				id: contact.id,
+				name: contact.name,
+				discordUsername: contact.discordUsername,
+				discordUserId: contact.discordUserId
+			},
+			choices: contact.opps.map((o) => ({
+				id: o.id,
+				name: o.name,
+				accountName: o.accountName,
+				stage: o.stage
+			}))
+		};
 		const recent = listRecent();
 		if (recent.length > 0) return {
 			kind: "picker",
 			choices: recent
 		};
 		return { kind: "manual" };
+	}
+	function findContactForCounterparty(cp) {
+		const all = listRecentContacts();
+		if (cp.userId) {
+			const byUserId = all.filter((c) => c.discordUserId === cp.userId).sort((a, b) => b.lastFocusedAt.localeCompare(a.lastFocusedAt))[0];
+			if (byUserId) return byUserId;
+		}
+		const normCp = normalizeDiscordHandle(cp.username);
+		if (!normCp) return void 0;
+		return all.filter((c) => c.discordUsername && normalizeDiscordHandle(c.discordUsername) === normCp).sort((a, b) => b.lastFocusedAt.localeCompare(a.lastFocusedAt))[0];
 	}
 	var RECENCY_THRESHOLD_MS = 14400 * 1e3;
 	function isRecent(iso) {
@@ -356,6 +462,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
   <div class="dsfl-popup__body">
     <div class="dsfl-popup__field">
       <label class="dsfl-popup__strategy-label">Source <span class="dsfl-popup__strategy">(${escapeHTML(data.strategyLabel)})</span></label>
+      ${data.contactScopedHint ? `<div class="dsfl-popup__hint">${escapeHTML(data.contactScopedHint)}</div>` : ""}
       <div class="dsfl-popup__target-grid">
         <div class="dsfl-popup__target-row">
           <span class="dsfl-popup__target-key">Opportunity</span>
@@ -532,18 +639,24 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			shadow.appendChild(style);
 			const initial = initialTarget(input.strategy);
 			const strategyLabel = strategyDescriptor(input.strategy);
-			const showPicker = input.strategy.kind === "picker";
+			const showPicker = input.strategy.kind === "picker" || input.strategy.kind === "contact-scoped-picker";
 			const showManual = input.strategy.kind === "manual";
 			const pickerChoices = input.strategy.kind === "picker" ? input.strategy.choices.map((c) => ({
 				id: c.id,
 				name: c.name,
 				accountName: c.account?.name
+			})) : input.strategy.kind === "contact-scoped-picker" ? input.strategy.choices.map((c) => ({
+				id: c.id,
+				name: c.name,
+				accountName: c.accountName
 			})) : [];
 			const container = document.createElement("div");
+			const contactScopedHint = input.strategy.kind === "contact-scoped-picker" ? `Showing ${input.strategy.choices.length} ${input.strategy.choices.length === 1 ? "Opp" : "Opps"} for ${input.strategy.contact.name}${input.strategy.contact.discordUsername ? " (@" + input.strategy.contact.discordUsername + ")" : ""}` : void 0;
 			container.innerHTML = popupHTML({
 				opportunityName: initial.oppName,
 				accountName: initial.accountName,
 				strategyLabel,
+				contactScopedHint,
 				subject: input.initialSubject,
 				description: input.initialDescription,
 				pickerChoices,
@@ -556,6 +669,13 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			let chosenOppName = initial.oppName;
 			let chosenAccountName = initial.accountName;
 			let chosenContactId = "";
+			if (input.strategy.kind === "contact-scoped-picker") {
+				const sel = shadow.querySelector("select[data-action=\"pick-contact\"]");
+				if (sel) {
+					sel.value = input.strategy.contact.id;
+					chosenContactId = input.strategy.contact.id;
+				}
+			}
 			const keyHandler = (e) => {
 				if ((e.composedPath?.() ?? []).includes(host)) e.stopImmediatePropagation();
 			};
@@ -596,13 +716,19 @@ Output only the JSON object. No markdown fences. No commentary.`;
 					}
 					const subject = shadow.querySelector(".dsfl-popup__subject").value;
 					const description = shadow.querySelector(".dsfl-popup__description").value;
+					let learnHandleForContactId;
+					if (chosenContactId) {
+						const matched = input.contactChoices.find((c) => c.id === chosenContactId);
+						if (matched && !matched.discordUsername) learnHandleForContactId = chosenContactId;
+					}
 					close({
 						oppId: chosenOppId,
 						oppName: chosenOppName,
 						accountName: chosenAccountName,
 						whoId: chosenContactId,
 						subject,
-						description
+						description,
+						learnHandleForContactId
 					});
 				}
 			});
@@ -648,6 +774,14 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			oppName: s.record.name,
 			accountName: s.record.account?.name ?? ""
 		};
+		if (s.kind === "contact-scoped-picker" && s.choices.length === 1) {
+			const only = s.choices[0];
+			return {
+				oppId: only.id,
+				oppName: only.name,
+				accountName: only.accountName ?? ""
+			};
+		}
 		return {
 			oppId: "",
 			oppName: "",
@@ -658,6 +792,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		switch (s.kind) {
 			case "open-sf-tab": return "detected from open SF tab";
 			case "learned-mapping": return "remembered from last log";
+			case "contact-scoped-picker": return `Opps for ${s.contact.name}`;
 			case "picker": return "pick from recent records";
 			case "manual": return "paste manually";
 		}
@@ -675,6 +810,18 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		const url = new URL(`https://${input.sfDomain}/lightning/o/Task/new`);
 		url.searchParams.set("defaultFieldValues", inner);
 		return url.toString();
+	}
+	function readCurrentDiscordUserId() {
+		for (const sel of [
+			"[class*=\"panels\"] [class*=\"avatar\"]",
+			"[data-list-item-id^=\"me-\"]",
+			"[class*=\"container\"][class*=\"userPanelOuter\"]"
+		]) {
+			const el = document.querySelector(sel);
+			const id = el?.getAttribute("data-user-id") ?? el?.closest("[data-user-id]")?.getAttribute("data-user-id") ?? el?.closest("[data-list-item-id^=\"me-\"]")?.getAttribute("data-list-item-id")?.replace(/^me-/, "");
+			if (id && /^\d{15,21}$/.test(id)) return id;
+		}
+		return null;
 	}
 	var URL_DESCRIPTION_LIMIT = 1200;
 	var PENDING_FILL_KEY$1 = "pending_task_fill";
@@ -694,7 +841,11 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			return;
 		}
 		console.log(`[discord-sf-logger] captured ${captured.messageCount} messages via ${captured.source}:`, captured.text);
-		const counterparty = detectCounterpartyFromDocumentTitle(document.title);
+		const counterparty = detectCounterparty(readCurrentDiscordUserId());
+		if (!counterparty) {
+			alert("Discord → SF Logger: could not detect the conversation. Open a 1:1 DM or channel and try again.");
+			return;
+		}
 		const strategy = identifyTarget({ counterparty });
 		let aiSummary;
 		try {
@@ -702,7 +853,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 				apiKey: settings.anthropicApiKey,
 				model: settings.anthropicModel,
 				transcript: captured.text,
-				counterparty
+				counterparty: counterparty.username
 			});
 		} catch (err) {
 			console.error("[discord-sf-logger] Anthropic call failed, falling back to subject=\"general update\"", err);
@@ -724,6 +875,19 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			}))
 		});
 		if (!result) return;
+		if (result.learnHandleForContactId) {
+			const existing = listRecentContacts().find((c) => c.id === result.learnHandleForContactId);
+			if (existing) {
+				recordContactVisit({
+					id: existing.id,
+					name: existing.name,
+					discordUsername: counterparty.username || existing.discordUsername,
+					discordUserId: counterparty.userId ?? existing.discordUserId,
+					opps: existing.opps
+				});
+				console.log(`[discord-sf-logger] learned Discord handle for Contact ${existing.id} = ${counterparty.username}${counterparty.userId ? ` (id ${counterparty.userId})` : ""}`);
+			}
+		}
 		const today = new Date().toISOString().slice(0, 10);
 		GM_setValue(PENDING_FILL_KEY$1, {
 			description: result.description,
@@ -739,10 +903,26 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			activityDate: today
 		});
 		GM_openInTab(fullUrl, { active: true });
-		if (counterparty) recordMapping(counterparty, result.oppId, result.oppName);
+		recordMapping(counterparty, result.oppId, result.oppName);
 	}
 	var POLL_INTERVAL_MS = 2e3;
 	var PENDING_FILL_KEY = "pending_task_fill";
+	var MAX_EMPTY_SCRAPE_POLLS = 5;
+	var scrapedRecordIds = new Set();
+	var emptyScrapeCounts = new Map();
+	function shouldRetryScrape(recordId) {
+		if (scrapedRecordIds.has(recordId)) return false;
+		return (emptyScrapeCounts.get(recordId) ?? 0) < MAX_EMPTY_SCRAPE_POLLS;
+	}
+	function markScrapeSuccess(recordId) {
+		scrapedRecordIds.add(recordId);
+		emptyScrapeCounts.delete(recordId);
+	}
+	function markScrapeEmpty(recordId) {
+		const n = (emptyScrapeCounts.get(recordId) ?? 0) + 1;
+		emptyScrapeCounts.set(recordId, n);
+		if (n >= MAX_EMPTY_SCRAPE_POLLS) scrapedRecordIds.add(recordId);
+	}
 	var RELATED_LIST_COUNT_RE = /\(\s*\d+\s*\)\s*$/;
 	var ACTION_LABEL_RE = /^(View|Add|Edit|New|Delete|Show|Hide|Clone|Share|Print|Export|Import|Manage|All|Save|Cancel)\b/i;
 	var RELATED_LIST_LABEL_RE = /^(Account Team|Contact Roles|Notes|Files|Activity|Activities|Cases|Opportunities|Tasks|Events|Campaign History|Quotes|Orders)\b/i;
@@ -764,14 +944,28 @@ Output only the JSON object. No markdown fences. No commentary.`;
 	function updateOpportunity(id) {
 		const name = readRecordName();
 		const account = readLinkedAccount();
+		let contactsToWrite;
+		if (shouldRetryScrape(`opp-contacts:${id}`)) {
+			const contacts = readOppContactRoles();
+			if (contacts.length > 0) {
+				const now = new Date().toISOString();
+				contactsToWrite = contacts.map((c) => ({
+					...c,
+					lastSeenAt: now
+				}));
+				markScrapeSuccess(`opp-contacts:${id}`);
+				console.log(`[discord-sf-logger] cached ${contacts.length} Contact Roles for Opp ${id}`);
+			} else markScrapeEmpty(`opp-contacts:${id}`);
+		}
 		const existing = listRecent().find((r) => r.id === id);
 		const hasGoodName = existing && existing.name !== existing.id;
 		const cachedAccountIsBad = existing?.account?.name ? isBadAccountName(existing.account.name) : false;
-		if (!(!existing || name && !hasGoodName || account && (!existing.account || cachedAccountIsBad) || cachedAccountIsBad)) {
+		if (!(!existing || name && !hasGoodName || account && (!existing.account || cachedAccountIsBad) || cachedAccountIsBad || !!contactsToWrite)) {
 			recordVisit({
 				id,
 				name: existing.name,
-				account: existing.account
+				account: existing.account,
+				contacts: existing.contacts
 			});
 			return;
 		}
@@ -779,7 +973,8 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		recordVisit({
 			id,
 			name: name ?? existing?.name ?? id,
-			account: finalAccount
+			account: finalAccount,
+			contacts: contactsToWrite ?? existing?.contacts
 		});
 		if (!existing || name && !hasGoodName || account && (!existing.account || cachedAccountIsBad)) {
 			const parts = [];
@@ -791,21 +986,37 @@ Output only the JSON object. No markdown fences. No commentary.`;
 	function updateContact(id) {
 		const name = readRecordName();
 		const discordUsername = readContactDiscordUsername();
+		let oppsToWrite;
+		if (shouldRetryScrape(`contact-opps:${id}`)) {
+			const opps = readContactRelatedOpps();
+			if (opps.length > 0) {
+				const now = new Date().toISOString();
+				oppsToWrite = opps.map((o) => ({
+					...o,
+					lastSeenAt: now
+				}));
+				markScrapeSuccess(`contact-opps:${id}`);
+				console.log(`[discord-sf-logger] cached ${opps.length} related Opps for Contact ${id}`);
+			} else markScrapeEmpty(`contact-opps:${id}`);
+		}
 		const existing = listRecentContacts().find((c) => c.id === id);
 		const hasGoodName = existing && existing.name !== existing.id;
 		const hasDiscordUsername = !!existing?.discordUsername;
-		if (!(!existing || name && !hasGoodName || discordUsername && !hasDiscordUsername)) {
+		if (!(!existing || name && !hasGoodName || discordUsername && !hasDiscordUsername || !!oppsToWrite)) {
 			recordContactVisit({
 				id,
 				name: existing.name,
-				discordUsername: existing.discordUsername
+				discordUsername: existing.discordUsername,
+				discordUserId: existing.discordUserId
 			});
 			return;
 		}
 		recordContactVisit({
 			id,
 			name: name ?? existing?.name ?? id,
-			discordUsername: discordUsername ?? existing?.discordUsername
+			discordUsername: discordUsername ?? existing?.discordUsername,
+			discordUserId: existing?.discordUserId,
+			opps: oppsToWrite
 		});
 		if (!existing || name && !hasGoodName || discordUsername && !hasDiscordUsername) {
 			const parts = [];
@@ -1119,6 +1330,60 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		});
 		(document.body || document.documentElement).appendChild(toastContainer);
 	}
+	function parseContactRelatedOppsFromDom(root) {
+		const anchors = Array.from(root.querySelectorAll("a[href*=\"/Opportunity/\"]"));
+		const seen = new Map();
+		for (const a of anchors) {
+			const m = (a.getAttribute("href") ?? a.href).match(/\/Opportunity\/([a-zA-Z0-9]{11,18})/);
+			if (!m) continue;
+			const id = m[1];
+			if (seen.has(id)) continue;
+			const name = readVisibleText(a);
+			if (!name) continue;
+			seen.set(id, {
+				id,
+				name
+			});
+		}
+		return Array.from(seen.values());
+	}
+	function readContactRelatedOpps() {
+		const containers = findAllInShadow("force-related-list-single-container, lst-related-list-single-container, records-related-list-single-container, .forceRelatedList");
+		const fakeRoot = document.createElement("div");
+		for (const c of containers) fakeRoot.appendChild(c.cloneNode(true));
+		if (fakeRoot.children.length === 0) {
+			const allOppAnchors = findAllInShadow("a[href*=\"/Opportunity/\"]");
+			for (const a of allOppAnchors) fakeRoot.appendChild(a.cloneNode(true));
+		}
+		return parseContactRelatedOppsFromDom(fakeRoot);
+	}
+	function parseOppContactRolesFromDom(root) {
+		const anchors = Array.from(root.querySelectorAll("a[href*=\"/Contact/\"]"));
+		const seen = new Map();
+		for (const a of anchors) {
+			const m = (a.getAttribute("href") ?? "").match(/\/Contact\/([a-zA-Z0-9]{11,18})/);
+			if (!m) continue;
+			const id = m[1];
+			if (seen.has(id)) continue;
+			const name = readVisibleText(a);
+			if (!name) continue;
+			seen.set(id, {
+				id,
+				name
+			});
+		}
+		return Array.from(seen.values());
+	}
+	function readOppContactRoles() {
+		const containers = findAllInShadow("force-related-list-single-container, lst-related-list-single-container, records-related-list-single-container, .forceRelatedList");
+		const fakeRoot = document.createElement("div");
+		for (const c of containers) fakeRoot.appendChild(c.cloneNode(true));
+		if (fakeRoot.children.length === 0) {
+			const allContactAnchors = findAllInShadow("a[href*=\"/Contact/\"]");
+			for (const a of allContactAnchors) fakeRoot.appendChild(a.cloneNode(true));
+		}
+		return parseOppContactRolesFromDom(fakeRoot);
+	}
 	function registerSettingsMenu() {
 		GM_registerMenuCommand("Discord → SF: Set Anthropic API key", () => {
 			const current = getSettings().anthropicApiKey;
@@ -1141,8 +1406,16 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			setSetting("subjectPrefix", next);
 			alert("Subject prefix saved.");
 		});
+		GM_registerMenuCommand("Discord → SF: Clear local cache", () => {
+			if (!confirm("Clear all local Discord-SF Logger caches?\n\nWill delete:\n  • recent_sf_records (visited Opps + cached related Contacts)\n  • recent_contacts (visited Contacts + cached related Opps + Discord handles)\n  • learned_mappings (Discord counterparty → Opp memory)\n\nSettings (API key, SF domain, subject prefix) are preserved.")) return;
+			GM_deleteValue("recent_sf_records");
+			GM_deleteValue("recent_contacts");
+			GM_deleteValue("learned_mappings");
+			console.log("[discord-sf-logger] local cache cleared");
+			alert("Local cache cleared. Tool will rebuild as you browse Salesforce.");
+		});
 	}
-	console.log(`%c[discord-sf-logger] loaded build 2026-05-27-fix on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
+	console.log(`%c[discord-sf-logger] loaded build 2026-05-27-contact-opps on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
 	registerSettingsMenu();
 	var host = window.location.hostname;
 	if (host === "discord.com") startDiscordIntegration();
