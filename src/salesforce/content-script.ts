@@ -1,7 +1,32 @@
-import { recordVisit, listRecent, recordContactVisit, listRecentContacts } from '../storage/recent-sf';
+import {
+  recordVisit, listRecent,
+  recordContactVisit, listRecentContacts,
+  type OpportunityVisitInput, type ContactVisitInput
+} from '../storage/recent-sf';
 
 const POLL_INTERVAL_MS = 2000;
 const PENDING_FILL_KEY = 'pending_task_fill';
+
+const MAX_EMPTY_SCRAPE_POLLS = 5;
+const scrapedRecordIds = new Set<string>();
+const emptyScrapeCounts = new Map<string, number>();
+
+function shouldRetryScrape(recordId: string): boolean {
+  if (scrapedRecordIds.has(recordId)) return false;
+  const n = emptyScrapeCounts.get(recordId) ?? 0;
+  return n < MAX_EMPTY_SCRAPE_POLLS;
+}
+
+function markScrapeSuccess(recordId: string): void {
+  scrapedRecordIds.add(recordId);
+  emptyScrapeCounts.delete(recordId);
+}
+
+function markScrapeEmpty(recordId: string): void {
+  const n = (emptyScrapeCounts.get(recordId) ?? 0) + 1;
+  emptyScrapeCounts.set(recordId, n);
+  if (n >= MAX_EMPTY_SCRAPE_POLLS) scrapedRecordIds.add(recordId);
+}
 
 interface PendingTaskFill {
   description: string;
@@ -36,6 +61,19 @@ function updateOpportunity(id: string): void {
   const name = readRecordName();
   const account = readLinkedAccount();
 
+  let contactsToWrite: OpportunityVisitInput['contacts'] | undefined;
+  if (shouldRetryScrape(`opp-contacts:${id}`)) {
+    const contacts = readOppContactRoles();
+    if (contacts.length > 0) {
+      const now = new Date().toISOString();
+      contactsToWrite = contacts.map(c => ({ ...c, lastSeenAt: now }));
+      markScrapeSuccess(`opp-contacts:${id}`);
+      console.log(`[discord-sf-logger] cached ${contacts.length} Contact Roles for Opp ${id}`);
+    } else {
+      markScrapeEmpty(`opp-contacts:${id}`);
+    }
+  }
+
   const existing = listRecent().find(r => r.id === id);
   const hasGoodName = existing && existing.name !== existing.id;
   const cachedAccountIsBad = existing?.account?.name ? isBadAccountName(existing.account.name) : false;
@@ -44,20 +82,26 @@ function updateOpportunity(id: string): void {
     !existing ||
     (name && !hasGoodName) ||
     (account && (!existing.account || cachedAccountIsBad)) ||
-    cachedAccountIsBad;
+    cachedAccountIsBad ||
+    !!contactsToWrite;
 
   if (!shouldUpdate) {
-    recordVisit({ id, name: existing!.name, account: existing!.account });
+    recordVisit({
+      id,
+      name: existing!.name,
+      account: existing!.account,
+      contacts: existing!.contacts
+    });
     return;
   }
 
-  const finalAccount =
-    account ?? (cachedAccountIsBad ? undefined : existing?.account);
+  const finalAccount = account ?? (cachedAccountIsBad ? undefined : existing?.account);
 
   recordVisit({
     id,
     name: name ?? existing?.name ?? id,
-    account: finalAccount
+    account: finalAccount,
+    contacts: contactsToWrite ?? existing?.contacts
   });
 
   if (!existing || (name && !hasGoodName) || (account && (!existing.account || cachedAccountIsBad))) {
@@ -74,6 +118,19 @@ function updateContact(id: string): void {
   const name = readRecordName();
   const discordUsername = readContactDiscordUsername();
 
+  let oppsToWrite: ContactVisitInput['opps'] | undefined;
+  if (shouldRetryScrape(`contact-opps:${id}`)) {
+    const opps = readContactRelatedOpps();
+    if (opps.length > 0) {
+      const now = new Date().toISOString();
+      oppsToWrite = opps.map(o => ({ ...o, lastSeenAt: now }));
+      markScrapeSuccess(`contact-opps:${id}`);
+      console.log(`[discord-sf-logger] cached ${opps.length} related Opps for Contact ${id}`);
+    } else {
+      markScrapeEmpty(`contact-opps:${id}`);
+    }
+  }
+
   const existing = listRecentContacts().find(c => c.id === id);
   const hasGoodName = existing && existing.name !== existing.id;
   const hasDiscordUsername = !!existing?.discordUsername;
@@ -81,14 +138,15 @@ function updateContact(id: string): void {
   const shouldUpdate =
     !existing ||
     (name && !hasGoodName) ||
-    (discordUsername && !hasDiscordUsername);
+    (discordUsername && !hasDiscordUsername) ||
+    !!oppsToWrite;
 
   if (!shouldUpdate) {
-    // Bump lastFocusedAt only (recordContactVisit always does that)
     recordContactVisit({
       id,
       name: existing!.name,
-      discordUsername: existing!.discordUsername
+      discordUsername: existing!.discordUsername,
+      discordUserId: existing!.discordUserId
     });
     return;
   }
@@ -96,7 +154,9 @@ function updateContact(id: string): void {
   recordContactVisit({
     id,
     name: name ?? existing?.name ?? id,
-    discordUsername: discordUsername ?? existing?.discordUsername
+    discordUsername: discordUsername ?? existing?.discordUsername,
+    discordUserId: existing?.discordUserId,
+    opps: oppsToWrite
   });
 
   if (!existing || (name && !hasGoodName) || (discordUsername && !hasDiscordUsername)) {
