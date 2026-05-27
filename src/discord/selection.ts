@@ -26,6 +26,34 @@ export function detectCounterpartyFromDocumentTitle(title: string): string {
   return match ? match[1] : '';
 }
 
+// Returns the counterparty's Discord identity by combining two sources:
+//   - username comes from document.title (existing behaviour, stable for DMs)
+//   - userId is the unique data-author-id on visible message <li> elements,
+//     excluding the current user's. Falls back to undefined when the selection
+//     is ambiguous (multiple non-self IDs) or when no data-author-id attributes
+//     are reachable.
+//
+// `currentUserId` is the Discord user-ID of the logged-in user, used to
+// exclude self-messages. Provided by the caller (content-script reads it once
+// per session from the user-area panel).
+export function detectCounterparty(currentUserId: string | null): import('../types').DiscordCounterparty | null {
+  const username = detectCounterpartyFromDocumentTitle(document.title);
+  const userId = pickCounterpartyUserId(currentUserId);
+  if (!username && !userId) return null;
+  return { username, userId };
+}
+
+function pickCounterpartyUserId(currentUserId: string | null): string | undefined {
+  const messages = Array.from(document.querySelectorAll<HTMLElement>('[data-author-id]'));
+  const ids = new Set<string>();
+  for (const m of messages) {
+    const id = m.getAttribute('data-author-id');
+    if (id && id !== currentUserId) ids.add(id);
+  }
+  if (ids.size === 1) return Array.from(ids)[0];
+  return undefined;
+}
+
 export interface CapturedTranscript {
   text: string;
   source: 'selection' | 'fallback-last-messages' | 'empty';
