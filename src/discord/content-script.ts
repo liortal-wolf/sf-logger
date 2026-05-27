@@ -6,7 +6,7 @@ import { identifyTarget } from '../matching/identify';
 import { showPopup } from '../popup/popup';
 import { buildSFTaskUrl } from '../salesforce/url-builder';
 import { recordMapping } from '../storage/mappings';
-import { listRecent } from '../storage/recent-sf';
+import { listRecentContacts } from '../storage/recent-sf';
 
 // SF's defaultFieldValues silently truncates around 1500-2000 chars of total URL.
 // For long descriptions we put a placeholder in the URL and queue the full text
@@ -57,8 +57,7 @@ async function handleLogClick(): Promise<void> {
   const cleanedSubject = aiSummary.subject.replace(/^\s*discord\s*:?\s*/i, '').trim() || 'general update';
   const finalSubject = `${settings.subjectPrefix}${cleanedSubject}`;
 
-  const contactChoices = listRecent()
-    .filter(r => r.type === 'Contact')
+  const contactChoices = listRecentContacts()
     .slice(0, 10)
     .map(r => ({ id: r.id, name: r.name }));
 

@@ -8,7 +8,7 @@ describe('identifyTarget strategy chain', () => {
   afterEach(() => __resetGM());
 
   it('returns open-sf-tab when a recently focused Opportunity exists', () => {
-    recordVisit({ id: '006OPP', name: 'Acme Opp', type: 'Opportunity' });
+    recordVisit({ id: '006OPP', name: 'Acme Opp' });
     const result = identifyTarget({ counterparty: 'joe' });
     expect(result.kind).toBe('open-sf-tab');
     if (result.kind === 'open-sf-tab') {
@@ -26,12 +26,19 @@ describe('identifyTarget strategy chain', () => {
     }
   });
 
-  it('falls back to picker when neither open tab nor learned mapping exists, and history has recent records', () => {
-    recordVisit({ id: '001A', name: 'Acme Account', type: 'Account' });
+  it('falls back to picker when no open tab + no learned mapping but recent Opportunities exist', () => {
+    // Insert an old visit that won't qualify as "recent" for strategy A
+    GM_setValue('recent_sf_records', [{
+      id: '006OLD',
+      name: 'Old Opp',
+      visitedAt: '2020-01-01T00:00:00Z',
+      lastFocusedAt: '2020-01-01T00:00:00Z'
+    }]);
     const result = identifyTarget({ counterparty: 'new_user' });
     expect(result.kind).toBe('picker');
     if (result.kind === 'picker') {
       expect(result.choices.length).toBeGreaterThan(0);
+      expect(result.choices[0].id).toBe('006OLD');
     }
   });
 
@@ -41,7 +48,7 @@ describe('identifyTarget strategy chain', () => {
   });
 
   it('prioritizes open-sf-tab over learned-mapping even when both exist', () => {
-    recordVisit({ id: '006TAB', name: 'Currently Open Opp', type: 'Opportunity' });
+    recordVisit({ id: '006TAB', name: 'Currently Open Opp' });
     recordMapping('joe', '006LEARNED', 'Learned Opp');
     const result = identifyTarget({ counterparty: 'joe' });
     expect(result.kind).toBe('open-sf-tab');

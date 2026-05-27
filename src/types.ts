@@ -4,15 +4,29 @@ export interface LearnedMapping {
   lastUsed: string; // ISO 8601
 }
 
-export interface RecentSFRecord {
+// One entry per Opportunity visited in Salesforce. Account info is nested
+// inline because there's a 1:1 relationship Opp → Account, and the picker
+// is Opportunity-centric (you log activities against Opps, not Accounts).
+export interface RecentOpportunity {
   id: string;
   name: string;
-  type: 'Opportunity' | 'Account' | 'Contact';
   visitedAt: string;       // ISO 8601
   lastFocusedAt: string;   // ISO 8601
-  accountName?: string;    // For Opportunity records: the linked Account name (if found)
-  accountId?: string;      // For Opportunity records: the linked Account ID (if found)
+  account?: { id: string; name: string };
 }
+
+// Contacts are tracked separately because they have an M:N relationship with
+// Opportunities — a Contact can appear on multiple deals.
+export interface RecentContact {
+  id: string;
+  name: string;
+  visitedAt: string;
+  lastFocusedAt: string;
+}
+
+// Back-compat alias so older imports keep compiling. Prefer RecentOpportunity
+// in new code.
+export type RecentSFRecord = RecentOpportunity;
 
 export interface Settings {
   anthropicApiKey: string;
@@ -24,18 +38,18 @@ export interface Settings {
 
 export interface CapturedDiscordContext {
   text: string;
-  counterpartyUsername: string;  // e.g. 'joe_acme'; empty string if unknown
+  counterpartyUsername: string;
   channelType: 'dm' | 'group-dm' | 'server-channel';
-  channelLabel: string;          // e.g. 'DM with joe_acme' or 'Acme Inc / #partners'
+  channelLabel: string;
 }
 
 export interface SummarizedConversation {
-  subject: string;       // one-line, will be prefixed with subjectPrefix later
-  description: string;   // cleaned transcript for SF Description field
+  subject: string;
+  description: string;
 }
 
 export type IdentifyStrategy =
-  | { kind: 'open-sf-tab'; record: RecentSFRecord }
-  | { kind: 'learned-mapping'; record: RecentSFRecord }
-  | { kind: 'picker'; choices: RecentSFRecord[] }
+  | { kind: 'open-sf-tab'; record: RecentOpportunity }
+  | { kind: 'learned-mapping'; record: RecentOpportunity }
+  | { kind: 'picker'; choices: RecentOpportunity[] }
   | { kind: 'manual' };

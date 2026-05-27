@@ -1,23 +1,26 @@
-import { recordVisit, listRecent } from '../storage/recent-sf';
+import { recordVisit, listRecent, recordContactVisit } from '../storage/recent-sf';
 
 const POLL_INTERVAL_MS = 2000;
 const PENDING_FILL_KEY = 'pending_task_fill';
-const PENDING_FILL_TTL_MS = 90 * 1000; // 90s window after Discord triggers the open
 
 interface PendingTaskFill {
   description: string;
   expiresAt: number;
 }
 
+// Anchors whose visible text is "Foo Bar(N)" — used to filter out related-list
+// shortcut links when we scrape the Account name.
+const RELATED_LIST_TEXT_RE = /\(\s*\d+\s*\)\s*$/;
+
 export function startSalesforceWatcher(): void {
   const tick = () => {
     const page = parseLightningUrl(window.location.href);
-
-    // Two independent jobs on every tick:
-    //  1) On record pages: capture/upgrade storage and show a toast
-    //  2) On /Task/new pages: complete any pending auto-fill of Comments
     if (page) {
-      updateStoredRecord(page);
+      if (page.type === 'Opportunity') updateOpportunity(page.id);
+      else if (page.type === 'Contact') updateContact(page.id);
+      // Standalone Account visits are intentionally NOT tracked — the Account
+      // lives inline on its Opportunity, so we only care about an Account name
+      // when scraping it from an Opp page.
     }
     tryFillPendingTask();
   };
@@ -29,52 +32,60 @@ export function startSalesforceWatcher(): void {
   tick();
 }
 
-function updateStoredRecord(page: { id: string; type: 'Opportunity' | 'Account' | 'Contact' }): void {
+function updateOpportunity(id: string): void {
   const name = readRecordName();
-  const account = page.type === 'Opportunity' ? readLinkedAccount() : null;
+  const account = readLinkedAccount();
 
-  const existing = listRecent().find(r => r.id === page.id);
+  const existing = listRecent().find(r => r.id === id);
   const hasGoodName = existing && existing.name !== existing.id;
+  const cachedAccountIsBad =
+    !!existing?.account?.name && RELATED_LIST_TEXT_RE.test(existing.account.name);
 
   const shouldUpdate =
     !existing ||
     (name && !hasGoodName) ||
-    (account && !existing.accountName);
+    (account && (!existing.account || cachedAccountIsBad)) ||
+    cachedAccountIsBad; // always try to fix a known-bad cached value
 
   if (!shouldUpdate) {
-    recordVisit({
-      id: page.id,
-      name: existing.name,
-      type: page.type,
-      accountName: existing.accountName,
-      accountId: existing.accountId
-    });
+    recordVisit({ id, name: existing.name, account: existing.account });
     return;
   }
 
+  // Decide what account info to persist:
+  //  - prefer freshly-scraped account
+  //  - if we have nothing fresh AND the existing cached value is "bad" ("(N)"
+  //    pattern), drop it rather than re-persisting bad data
+  //  - otherwise keep the existing one
+  const finalAccount =
+    account ?? (cachedAccountIsBad ? undefined : existing?.account);
+
   recordVisit({
-    id: page.id,
-    name: name ?? existing?.name ?? page.id,
-    type: page.type,
-    accountName: account?.name ?? existing?.accountName,
-    accountId: account?.id ?? existing?.accountId
+    id,
+    name: name ?? existing?.name ?? id,
+    account: finalAccount
   });
 
-  // Toast feedback when we successfully captured new info
-  const upgradedName = name && !hasGoodName;
-  const upgradedAccount = account && !existing?.accountName;
-  if (upgradedName || upgradedAccount || !existing) {
+  if (!existing || (name && !hasGoodName) || (account && (!existing.account || cachedAccountIsBad))) {
     const parts: string[] = [];
     if (name) parts.push(name);
-    if (account?.name) parts.push(`+ ${account.name}`);
-    const message =
-      parts.length > 0
-        ? `Cached ${page.type}: ${parts.join(' ')}`
-        : `Cached ${page.type}: ${page.id}`;
-    showToast(message, 'success');
-    console.log(`[discord-sf-logger] ${message}`);
-  } else if (page.type === 'Opportunity' && !account) {
-    console.log(`[discord-sf-logger] no linked Account found yet for Opp ${page.id} — will keep trying`);
+    if (finalAccount?.name) parts.push(`(${finalAccount.name})`);
+    showToast(`Cached Opportunity ${parts.join(' ')}`, 'success');
+  } else if (!account) {
+    console.log(`[discord-sf-logger] no linked Account found yet for Opp ${id} — will keep trying`);
+  }
+}
+
+function updateContact(id: string): void {
+  const name = readRecordName();
+  const existing = listRecent(); // not relevant — contacts are separate
+  void existing;
+
+  const finalName = name ?? id;
+  recordContactVisit({ id, name: finalName });
+
+  if (name) {
+    showToast(`Cached Contact: ${name}`, 'success');
   }
 }
 
@@ -123,11 +134,6 @@ function looksLikeSFId(s: string): boolean {
   return /^[a-zA-Z0-9]{15,18}$/.test(s);
 }
 
-// Some link patterns to REJECT when scraping the Account from an Opportunity page:
-// - related-list shortcuts have text like "Account Team(0)", "Contact Roles(3)"
-// - they end with a digit-in-parens suffix
-const RELATED_LIST_TEXT_RE = /\(\s*\d+\s*\)\s*$/;
-
 function findAllAccountLinks(): HTMLAnchorElement[] {
   const results: HTMLAnchorElement[] = [];
   const visited = new WeakSet<Element | Document | ShadowRoot>();
@@ -138,13 +144,10 @@ function findAllAccountLinks(): HTMLAnchorElement[] {
 
     const anchors = root.querySelectorAll<HTMLAnchorElement>('a[href*="/Account/"]');
     for (const a of anchors) {
-      if (/\/Account\/[a-zA-Z0-9]{11,18}/.test(a.href)) {
-        results.push(a);
-      }
+      if (/\/Account\/[a-zA-Z0-9]{11,18}/.test(a.href)) results.push(a);
     }
 
-    const all = root.querySelectorAll('*');
-    for (const el of all) {
+    for (const el of Array.from(root.querySelectorAll('*'))) {
       const sr = (el as Element).shadowRoot;
       if (sr) walk(sr);
     }
@@ -157,28 +160,33 @@ function findAllAccountLinks(): HTMLAnchorElement[] {
 function readLinkedAccount(): { name: string; id: string } | null {
   const candidates = findAllAccountLinks();
 
-  // Prefer canonical /view URLs (page-header Account link) over /related/* shortcuts
-  const sorted = [...candidates].sort((a, b) => {
-    const aView = /\/view(?:\?|$)/.test(a.href) ? 0 : 1;
-    const bView = /\/view(?:\?|$)/.test(b.href) ? 0 : 1;
-    return aView - bView;
+  // Score each candidate; lower score = better. Canonical /view links beat
+  // /related/<list>/view shortcut links; clean text beats "(N)" suffixes.
+  const scored = candidates.map(link => {
+    const text = link.textContent?.trim() ?? '';
+    const idMatch = link.href.match(/\/Account\/([a-zA-Z0-9]{11,18})/);
+    const id = idMatch?.[1] ?? '';
+
+    if (!id || !text || looksLikeSFId(text)) return { link, text, id, score: 999 };
+
+    let score = 0;
+    // canonical /view URL strongly preferred
+    if (!/\/Account\/[a-zA-Z0-9]+\/view(?:\?|$|#)/.test(link.href)) score += 10;
+    // related-list shortcut text is disqualifying
+    if (RELATED_LIST_TEXT_RE.test(text)) score += 100;
+    // text shouldn't be a known related-list label
+    if (/^(Account Team|Contact Roles|Notes|Files|Activity|Activities|Cases|Opportunities)/i.test(text)) score += 50;
+
+    return { link, text, id, score };
   });
 
-  for (const link of sorted) {
-    const idMatch = link.href.match(/\/Account\/([a-zA-Z0-9]{11,18})/);
-    const id = idMatch?.[1];
-    const name = link.textContent?.trim();
-
-    if (!id || !name || name.length === 0) continue;
-    if (looksLikeSFId(name)) continue;
-    if (RELATED_LIST_TEXT_RE.test(name)) continue; // skip "Account Team(0)" etc.
-
-    return { name, id };
-  }
-  return null;
+  scored.sort((a, b) => a.score - b.score);
+  const best = scored[0];
+  if (!best || best.score >= 100) return null;
+  return { name: best.text, id: best.id };
 }
 
-// ---------- Auto-fill Task/new Comments (replaces clipboard fallback) ----------
+// ---------- Auto-fill Task/new Comments ----------
 
 function tryFillPendingTask(): void {
   if (!/\/lightning\/o\/Task\/new/.test(window.location.href)) return;
@@ -191,9 +199,8 @@ function tryFillPendingTask(): void {
   }
 
   const textarea = findCommentsTextarea();
-  if (!textarea) return; // form not rendered yet; try again next tick
+  if (!textarea) return;
 
-  // Already filled correctly?
   if (textarea.value === pending.description) {
     GM_deleteValue(PENDING_FILL_KEY);
     return;
@@ -205,9 +212,6 @@ function tryFillPendingTask(): void {
   GM_deleteValue(PENDING_FILL_KEY);
 }
 
-// Walk shadow roots looking for the Task Comments textarea. Lightning renders
-// long-text fields as <lightning-textarea> wrapping a native <textarea> inside
-// its (open) shadow root.
 function findCommentsTextarea(): HTMLTextAreaElement | null {
   const all: HTMLTextAreaElement[] = [];
   const visited = new WeakSet<Element | Document | ShadowRoot>();
@@ -230,7 +234,6 @@ function findCommentsTextarea(): HTMLTextAreaElement | null {
   if (all.length === 0) return null;
   if (all.length === 1) return all[0];
 
-  // Multiple textareas — find the one associated with a "Comments" label.
   for (const ta of all) {
     const container = ta.closest('lightning-textarea, [data-target-selection-name*="Description"], .slds-form-element');
     const label = container?.textContent?.toLowerCase() ?? '';
@@ -239,13 +242,10 @@ function findCommentsTextarea(): HTMLTextAreaElement | null {
     }
   }
 
-  // Fallback: pick the largest textarea (Comments is usually the biggest)
   all.sort((a, b) => (b.rows ?? 0) - (a.rows ?? 0));
   return all[0];
 }
 
-// Bypass React/LWC controlled-input behavior by calling the prototype's native
-// setter directly, then dispatching the events the framework listens for.
 function setNativeValue(el: HTMLTextAreaElement | HTMLInputElement, value: string): void {
   const proto = el.tagName === 'TEXTAREA'
     ? HTMLTextAreaElement.prototype
@@ -260,7 +260,7 @@ function setNativeValue(el: HTMLTextAreaElement | HTMLInputElement, value: strin
   el.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
-// ---------- Toast notifications ----------
+// ---------- Toasts ----------
 
 let toastContainer: HTMLDivElement | null = null;
 
@@ -268,21 +268,25 @@ function showToast(message: string, kind: 'success' | 'info' = 'info'): void {
   ensureToastContainer();
   if (!toastContainer) return;
 
+  console.log(`[discord-sf-logger] toast: ${message}`);
+
   const toast = document.createElement('div');
   toast.textContent = `✓ ${message}`;
   Object.assign(toast.style, {
     background: kind === 'success' ? '#04844b' : '#16325c',
     color: '#fff',
-    padding: '10px 14px',
+    padding: '14px 18px',
     borderRadius: '6px',
-    fontSize: '13px',
-    fontWeight: '500',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+    fontSize: '14px',
+    fontWeight: '600',
+    boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
     opacity: '0',
     transition: 'opacity 200ms ease, transform 200ms ease',
-    transform: 'translateY(8px)',
-    maxWidth: '320px',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+    transform: 'translateY(12px)',
+    maxWidth: '360px',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    pointerEvents: 'auto',
+    border: '2px solid rgba(255,255,255,0.2)'
   });
 
   toastContainer.appendChild(toast);
@@ -293,9 +297,9 @@ function showToast(message: string, kind: 'success' | 'info' = 'info'): void {
 
   setTimeout(() => {
     toast.style.opacity = '0';
-    toast.style.transform = 'translateY(8px)';
+    toast.style.transform = 'translateY(12px)';
     setTimeout(() => toast.remove(), 250);
-  }, 3500);
+  }, 5500);
 }
 
 function ensureToastContainer(): void {
@@ -304,15 +308,15 @@ function ensureToastContainer(): void {
   toastContainer.id = 'dsfl-toast-container';
   Object.assign(toastContainer.style, {
     position: 'fixed',
-    bottom: '24px',
-    right: '24px',
-    zIndex: '2147483646',
+    bottom: '32px',
+    right: '32px',
+    zIndex: '2147483647',
     display: 'flex',
     flexDirection: 'column',
-    gap: '8px',
+    gap: '10px',
     pointerEvents: 'none'
   });
-  document.body.appendChild(toastContainer);
+  (document.body || document.documentElement).appendChild(toastContainer);
 }
 
 export const __testing__ = { parseLightningUrl, parseSFTitle };

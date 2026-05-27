@@ -1,57 +1,96 @@
-import type { RecentSFRecord } from '../types';
+import type { RecentOpportunity, RecentContact } from '../types';
 
-const STORAGE_KEY = 'recent_sf_records';
+const OPPS_KEY = 'recent_sf_records';     // keeps the same storage key for back-compat
+const CONTACTS_KEY = 'recent_contacts';
 const MAX_ENTRIES = 20;
 
-export function listRecent(): RecentSFRecord[] {
-  return GM_getValue<RecentSFRecord[]>(STORAGE_KEY, []);
+// Migrate legacy entries (which were union-typed Opp|Account|Contact) into the
+// new Opp-only shape. Standalone Account/Contact entries are dropped here —
+// Contacts now live in `recent_contacts` and standalone Accounts are no longer
+// tracked.
+export function listRecent(): RecentOpportunity[] {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const raw = GM_getValue<any[]>(OPPS_KEY, []);
+  return raw
+    .filter(r => !r.type || r.type === 'Opportunity')
+    .map<RecentOpportunity>(r => ({
+      id: r.id,
+      name: r.name,
+      visitedAt: r.visitedAt,
+      lastFocusedAt: r.lastFocusedAt,
+      account: r.account
+        ?? (r.accountId && r.accountName ? { id: r.accountId, name: r.accountName } : undefined)
+    }));
 }
 
-export interface RecordVisitInput {
+export interface OpportunityVisitInput {
   id: string;
   name: string;
-  type: 'Opportunity' | 'Account';
-  accountName?: string;
-  accountId?: string;
+  account?: { id: string; name: string };
 }
 
-export function recordVisit(record: RecordVisitInput): void {
+export function recordVisit(input: OpportunityVisitInput): void {
   const now = new Date().toISOString();
   const existing = listRecent();
-  const idx = existing.findIndex(r => r.id === record.id);
+  const idx = existing.findIndex(r => r.id === input.id);
 
-  let updated: RecentSFRecord;
+  let updated: RecentOpportunity;
   if (idx >= 0) {
-    // Preserve original visitedAt, update mutable fields and move to front
     updated = {
       ...existing[idx],
-      name: record.name,
+      name: input.name,
       lastFocusedAt: now,
-      accountName: record.accountName ?? existing[idx].accountName,
-      accountId: record.accountId ?? existing[idx].accountId
+      account: input.account ?? existing[idx].account
     };
     existing.splice(idx, 1);
   } else {
     updated = {
-      id: record.id,
-      name: record.name,
-      type: record.type,
+      id: input.id,
+      name: input.name,
       visitedAt: now,
       lastFocusedAt: now,
-      accountName: record.accountName,
-      accountId: record.accountId
+      account: input.account
     };
   }
 
   existing.unshift(updated);
-  const capped = existing.slice(0, MAX_ENTRIES);
-  GM_setValue(STORAGE_KEY, capped);
+  GM_setValue(OPPS_KEY, existing.slice(0, MAX_ENTRIES));
 }
 
-export function getMostRecentlyFocused(
-  type: 'Opportunity' | 'Account'
-): RecentSFRecord | null {
-  const matching = listRecent().filter(r => r.type === type);
-  if (matching.length === 0) return null;
-  return matching[0];
+export function getMostRecentlyFocused(): RecentOpportunity | null {
+  const all = listRecent();
+  return all[0] ?? null;
+}
+
+// ---------- Contacts (separate top-level list) ----------
+
+export function listRecentContacts(): RecentContact[] {
+  return GM_getValue<RecentContact[]>(CONTACTS_KEY, []);
+}
+
+export interface ContactVisitInput {
+  id: string;
+  name: string;
+}
+
+export function recordContactVisit(input: ContactVisitInput): void {
+  const now = new Date().toISOString();
+  const existing = listRecentContacts();
+  const idx = existing.findIndex(r => r.id === input.id);
+
+  let updated: RecentContact;
+  if (idx >= 0) {
+    updated = { ...existing[idx], name: input.name, lastFocusedAt: now };
+    existing.splice(idx, 1);
+  } else {
+    updated = {
+      id: input.id,
+      name: input.name,
+      visitedAt: now,
+      lastFocusedAt: now
+    };
+  }
+
+  existing.unshift(updated);
+  GM_setValue(CONTACTS_KEY, existing.slice(0, MAX_ENTRIES));
 }

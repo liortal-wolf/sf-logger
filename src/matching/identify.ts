@@ -1,4 +1,4 @@
-import type { IdentifyStrategy, RecentSFRecord } from '../types';
+import type { IdentifyStrategy, RecentOpportunity } from '../types';
 import { getMostRecentlyFocused, listRecent } from '../storage/recent-sf';
 import { getMappingFor } from '../storage/mappings';
 
@@ -7,41 +7,36 @@ export interface IdentifyInput {
 }
 
 export function identifyTarget(input: IdentifyInput): IdentifyStrategy {
-  // Strategy A: Open SF tab on an Opportunity
-  const openOpp = getMostRecentlyFocused('Opportunity');
+  // Strategy A: most-recently-focused Opportunity within recency window
+  const openOpp = getMostRecentlyFocused();
   if (openOpp && isRecent(openOpp.lastFocusedAt)) {
     return { kind: 'open-sf-tab', record: openOpp };
   }
 
-  // Strategy B: Learned mapping for this Discord counterparty
+  // Strategy B: learned mapping (Discord counterparty → Opportunity)
   const mapping = getMappingFor(input.counterparty);
   if (mapping) {
-    const record: RecentSFRecord = {
+    const record: RecentOpportunity = {
       id: mapping.oppId,
       name: mapping.oppName,
-      type: 'Opportunity',
       visitedAt: mapping.lastUsed,
       lastFocusedAt: mapping.lastUsed
     };
     return { kind: 'learned-mapping', record };
   }
 
-  // Strategy C: Picker from recent SF records (Opportunities and Accounts both eligible).
-  // The plan §7 mentions "recent SF records you visited" without restricting to
-  // Opportunity-only, and the tests store Account visits here, so we include all
-  // types rather than filtering to Opportunity alone.
+  // Strategy C: picker of recent Opportunities
   const recent = listRecent();
   if (recent.length > 0) {
     return { kind: 'picker', choices: recent };
   }
 
-  // Strategy D: Manual entry
+  // Strategy D: manual entry
   return { kind: 'manual' };
 }
 
 // "Recent" means focused within the last 4 hours — covers a normal work session
-// where you alt-tab between SF and Discord. Anything older falls through to
-// learned-mapping or picker so we don't auto-target a stale Opportunity.
+// where you alt-tab between SF and Discord.
 const RECENCY_THRESHOLD_MS = 4 * 60 * 60 * 1000;
 
 function isRecent(iso: string): boolean {
