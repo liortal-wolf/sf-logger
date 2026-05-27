@@ -86,6 +86,38 @@ describe('recent SF opportunities', () => {
     expect(list[0].id).toBe('006A');
     expect(list[0].account).toEqual({ id: '001AC', name: 'Acme Inc' });
   });
+
+  it('unions contacts on repeat Opp visits, keyed by Contact id', () => {
+    recordVisit({
+      id: '006A',
+      name: 'Acme',
+      contacts: [{ id: '003A', name: 'Kesem', lastSeenAt: '2026-05-27T10:00:00Z' }]
+    });
+    recordVisit({
+      id: '006A',
+      name: 'Acme',
+      contacts: [{ id: '003B', name: 'Joe', lastSeenAt: '2026-05-27T11:00:00Z' }]
+    });
+    const list = listRecent();
+    expect(list[0].contacts?.length).toBe(2);
+    const ids = list[0].contacts?.map(c => c.id) ?? [];
+    expect(ids).toContain('003A');
+    expect(ids).toContain('003B');
+  });
+
+  it('caps contacts per Opp at 10, dropping the oldest by lastSeenAt', () => {
+    const contacts = Array.from({ length: 12 }, (_, i) => ({
+      id: `003${String(i).padStart(2, '0')}`,
+      name: `Contact ${i}`,
+      lastSeenAt: `2026-05-${String(10 + i).padStart(2, '0')}T00:00:00Z`
+    }));
+    recordVisit({ id: '006A', name: 'Acme', contacts });
+    const stored = listRecent()[0].contacts ?? [];
+    expect(stored.length).toBe(10);
+    const ids = stored.map(c => c.id);
+    expect(ids).not.toContain('00300'); // oldest dropped
+    expect(ids).toContain('00311'); // newest kept
+  });
 });
 
 describe('recent contacts', () => {

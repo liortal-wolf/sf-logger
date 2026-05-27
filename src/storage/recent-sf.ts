@@ -19,7 +19,8 @@ export function listRecent(): RecentOpportunity[] {
       visitedAt: r.visitedAt,
       lastFocusedAt: r.lastFocusedAt,
       account: r.account
-        ?? (r.accountId && r.accountName ? { id: r.accountId, name: r.accountName } : undefined)
+        ?? (r.accountId && r.accountName ? { id: r.accountId, name: r.accountName } : undefined),
+      contacts: r.contacts
     }));
 }
 
@@ -32,7 +33,10 @@ export interface OpportunityVisitInput {
   // stored account here, because that prevents callers from clearing a
   // detected-bad cached value.
   account?: { id: string; name: string };
+  contacts?: Array<{ id: string; name: string; lastSeenAt: string }>;
 }
+
+const MAX_CONTACTS_PER_OPP = 10;
 
 export function recordVisit(input: OpportunityVisitInput): void {
   const now = new Date().toISOString();
@@ -45,7 +49,8 @@ export function recordVisit(input: OpportunityVisitInput): void {
       ...existing[idx],
       name: input.name,
       lastFocusedAt: now,
-      account: input.account
+      account: input.account,
+      contacts: mergeContacts(existing[idx].contacts, input.contacts)
     };
     existing.splice(idx, 1);
   } else {
@@ -54,12 +59,33 @@ export function recordVisit(input: OpportunityVisitInput): void {
       name: input.name,
       visitedAt: now,
       lastFocusedAt: now,
-      account: input.account
+      account: input.account,
+      contacts: input.contacts ? capContacts(input.contacts) : undefined
     };
   }
 
   existing.unshift(updated);
   GM_setValue(OPPS_KEY, existing.slice(0, MAX_ENTRIES));
+}
+
+function mergeContacts(
+  existing: RecentOpportunity['contacts'],
+  incoming: OpportunityVisitInput['contacts']
+): RecentOpportunity['contacts'] {
+  if (!incoming || incoming.length === 0) return existing;
+  const byId = new Map<string, NonNullable<RecentOpportunity['contacts']>[number]>();
+  for (const c of existing ?? []) byId.set(c.id, c);
+  for (const c of incoming) {
+    const prior = byId.get(c.id);
+    byId.set(c.id, { ...prior, ...c });
+  }
+  return capContacts(Array.from(byId.values()));
+}
+
+function capContacts(contacts: NonNullable<RecentOpportunity['contacts']>): NonNullable<RecentOpportunity['contacts']> {
+  return [...contacts]
+    .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))
+    .slice(0, MAX_CONTACTS_PER_OPP);
 }
 
 export function getMostRecentlyFocused(): RecentOpportunity | null {
