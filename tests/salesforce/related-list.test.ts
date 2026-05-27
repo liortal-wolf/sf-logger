@@ -58,3 +58,36 @@ describe('parseContactRelatedOppsFromDom', () => {
     expect(parseContactRelatedOppsFromDom(document)).toEqual([]);
   });
 });
+
+const { parseOppContactRolesFromDom } = __testing__ as unknown as {
+  parseOppContactRolesFromDom: (root: ParentNode) => Array<{ id: string; name: string }>;
+};
+
+describe('parseOppContactRolesFromDom', () => {
+  it('extracts contact id + name from /Contact/<id> anchors', () => {
+    document.body.innerHTML = `
+      <div>
+        <a href="/lightning/r/Contact/003AA00000000A1/view"><span>Kesem</span></a>
+        <a href="/lightning/r/Contact/003AA00000000A2/view"><span>Joe</span></a>
+      </div>
+    `;
+    const rows = parseOppContactRolesFromDom(document);
+    expect(rows.length).toBe(2);
+    expect(rows[0]).toEqual({ id: '003AA00000000A1', name: 'Kesem' });
+  });
+
+  it('skips Contact list view and other non-record contact links', () => {
+    document.body.innerHTML = `
+      <div>
+        <a href="/lightning/r/Contact/003AA00000000A1/view"><span>Kesem</span></a>
+        <a href="/lightning/o/Contact/home"><span>All Contacts</span></a>
+      </div>
+    `;
+    expect(parseOppContactRolesFromDom(document).length).toBe(1);
+  });
+
+  it('returns empty when no Contact rows are present', () => {
+    document.body.innerHTML = '<div></div>';
+    expect(parseOppContactRolesFromDom(document)).toEqual([]);
+  });
+});

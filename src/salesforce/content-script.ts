@@ -586,4 +586,33 @@ function readContactRelatedOpps(): Array<{ id: string; name: string; accountName
   return parseContactRelatedOppsFromDom(fakeRoot);
 }
 
-export const __testing__ = { parseLightningUrl, parseSFTitle, isBadAccountName, readDiscordFromVisibleText, parseContactRelatedOppsFromDom };
+function parseOppContactRolesFromDom(root: ParentNode): Array<{ id: string; name: string }> {
+  const anchors = Array.from(root.querySelectorAll<HTMLAnchorElement>('a[href*="/Contact/"]'));
+  const seen = new Map<string, { id: string; name: string }>();
+  for (const a of anchors) {
+    const href = a.getAttribute('href') ?? '';
+    const m = href.match(/\/Contact\/([a-zA-Z0-9]{11,18})/);
+    if (!m) continue;
+    const id = m[1];
+    if (seen.has(id)) continue;
+    const name = readVisibleText(a);
+    if (!name) continue;
+    seen.set(id, { id, name });
+  }
+  return Array.from(seen.values());
+}
+
+function readOppContactRoles(): Array<{ id: string; name: string }> {
+  const containers = findAllInShadow<HTMLElement>(
+    'force-related-list-single-container, lst-related-list-single-container, records-related-list-single-container, .forceRelatedList'
+  );
+  const fakeRoot = document.createElement('div');
+  for (const c of containers) fakeRoot.appendChild(c.cloneNode(true));
+  if (fakeRoot.children.length === 0) {
+    const allContactAnchors = findAllInShadow<HTMLAnchorElement>('a[href*="/Contact/"]');
+    for (const a of allContactAnchors) fakeRoot.appendChild(a.cloneNode(true));
+  }
+  return parseOppContactRolesFromDom(fakeRoot);
+}
+
+export const __testing__ = { parseLightningUrl, parseSFTitle, isBadAccountName, readDiscordFromVisibleText, parseContactRelatedOppsFromDom, parseOppContactRolesFromDom };
