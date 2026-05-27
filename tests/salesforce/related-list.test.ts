@@ -86,6 +86,17 @@ describe('parseOppContactRolesFromDom', () => {
     expect(parseOppContactRolesFromDom(document).length).toBe(1);
   });
 
+  it('deduplicates by id (related lists sometimes render the same row twice)', () => {
+    document.body.innerHTML = `
+      <div>
+        <a href="/lightning/r/Contact/003AA00000000A1/view"><span>Kesem</span></a>
+        <a href="/lightning/r/Contact/003AA00000000A1/view"><span>Kesem</span></a>
+      </div>
+    `;
+    const rows = parseOppContactRolesFromDom(document);
+    expect(rows.length).toBe(1);
+  });
+
   it('returns empty when no Contact rows are present', () => {
     document.body.innerHTML = '<div></div>';
     expect(parseOppContactRolesFromDom(document)).toEqual([]);
