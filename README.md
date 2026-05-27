@@ -7,7 +7,7 @@ Tampermonkey userscript for Overwolf BD/AM: capture a Discord conversation, summ
 1. Install [Tampermonkey](https://www.tampermonkey.net/) (Chrome or Edge).
 2. With Tampermonkey enabled, click this link — it'll prompt to install:
    `https://raw.githubusercontent.com/liortal-wolf/sf-logger/main/dist/discord-sf-logger.user.js`
-3. Open the Tampermonkey extension menu and run **Discord → SF: Set Anthropic API key** (grab one from `console.anthropic.com` — cost is pennies per month).
+3. Open the Tampermonkey extension menu and run **Discord → SF: Set Anthropic API key**. Ask Lior (`lior.tal@overwolf.com`) for the shared team key.
 
 **Auto-updates:** Tampermonkey re-checks the script daily. When a new version ships you'll be prompted in-browser; click update and you're current.
 
