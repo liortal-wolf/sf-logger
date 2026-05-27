@@ -16,6 +16,10 @@ export interface PopupResult {
   whoId: string;
   subject: string;
   description: string;
+  // If set, the caller should write the current Discord counterparty's
+  // username/userId into the cached Contact with this id. Used when the user
+  // manually picks a Contact whose discordUsername was empty in storage.
+  learnHandleForContactId?: string;
 }
 
 const URL_WARN_THRESHOLD = 1200;
@@ -130,13 +134,23 @@ export function showPopup(input: PopupInput): Promise<PopupResult | null> {
         }
         const subject = (shadow.querySelector('.dsfl-popup__subject') as HTMLInputElement).value;
         const description = (shadow.querySelector('.dsfl-popup__description') as HTMLTextAreaElement).value;
+        // Fold-in A: if the user manually picked a Contact whose cached
+        // discordUsername is empty, ask the caller to learn the binding.
+        let learnHandleForContactId: string | undefined;
+        if (chosenContactId) {
+          const matched = input.contactChoices.find(c => c.id === chosenContactId);
+          if (matched && !matched.discordUsername) {
+            learnHandleForContactId = chosenContactId;
+          }
+        }
         close({
           oppId: chosenOppId,
           oppName: chosenOppName,
           accountName: chosenAccountName,
           whoId: chosenContactId,
           subject,
-          description
+          description,
+          learnHandleForContactId
         });
       }
     });
