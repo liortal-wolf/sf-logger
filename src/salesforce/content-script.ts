@@ -557,7 +557,7 @@ function parseContactRelatedOppsFromDom(root: ParentNode): Array<{
     // Use getAttribute to get the raw href (avoids browser absolute-URL
     // resolution which can interfere with ID extraction in test environments).
     const rawHref = a.getAttribute('href') ?? a.href;
-    const m = rawHref.match(/\/Opportunity\/([a-zA-Z0-9]{6,18})(?:\/|$)/);
+    const m = rawHref.match(/\/Opportunity\/([a-zA-Z0-9]{11,18})/);
     if (!m) continue;
     const id = m[1];
     if (seen.has(id)) continue;
