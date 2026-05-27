@@ -33,17 +33,27 @@ export function showPopup(input: PopupInput): Promise<PopupResult | null> {
 
     const initial = initialTarget(input.strategy);
     const strategyLabel = strategyDescriptor(input.strategy);
-    const showPicker = input.strategy.kind === 'picker';
+    const showPicker = input.strategy.kind === 'picker' || input.strategy.kind === 'contact-scoped-picker';
     const showManual = input.strategy.kind === 'manual';
-    const pickerChoices = input.strategy.kind === 'picker'
-      ? input.strategy.choices.map(c => ({ id: c.id, name: c.name, accountName: c.account?.name }))
-      : [];
+    const pickerChoices =
+      input.strategy.kind === 'picker'
+        ? input.strategy.choices.map(c => ({ id: c.id, name: c.name, accountName: c.account?.name }))
+        : input.strategy.kind === 'contact-scoped-picker'
+          ? input.strategy.choices.map(c => ({ id: c.id, name: c.name, accountName: c.accountName }))
+          : [];
 
     const container = document.createElement('div');
+
+    const contactScopedHint =
+      input.strategy.kind === 'contact-scoped-picker'
+        ? `Showing ${input.strategy.choices.length} ${input.strategy.choices.length === 1 ? 'Opp' : 'Opps'} for ${input.strategy.contact.name}${input.strategy.contact.discordUsername ? ' (@' + input.strategy.contact.discordUsername + ')' : ''}`
+        : undefined;
+
     container.innerHTML = popupHTML({
       opportunityName: initial.oppName,
       accountName: initial.accountName,
       strategyLabel,
+      contactScopedHint,
       subject: input.initialSubject,
       description: input.initialDescription,
       pickerChoices,
@@ -57,6 +67,15 @@ export function showPopup(input: PopupInput): Promise<PopupResult | null> {
     let chosenOppName = initial.oppName;
     let chosenAccountName = initial.accountName;
     let chosenContactId = '';
+
+    // Pre-select the matched Contact in the Contact dropdown when applicable.
+    if (input.strategy.kind === 'contact-scoped-picker') {
+      const sel = shadow.querySelector('select[data-action="pick-contact"]') as HTMLSelectElement | null;
+      if (sel) {
+        sel.value = input.strategy.contact.id;
+        chosenContactId = input.strategy.contact.id;
+      }
+    }
 
     // Block Discord's window/document keyboard listeners from stealing
     // keystrokes that originate in the popup. We attach at the window in the
@@ -172,6 +191,15 @@ function initialTarget(s: IdentifyStrategy): { oppId: string; oppName: string; a
       accountName: s.record.account?.name ?? ''
     };
   }
+  if (s.kind === 'contact-scoped-picker' && s.choices.length === 1) {
+    // fold-in B: pre-select the sole choice so the user only has to click Send
+    const only = s.choices[0];
+    return {
+      oppId: only.id,
+      oppName: only.name,
+      accountName: only.accountName ?? ''
+    };
+  }
   return { oppId: '', oppName: '', accountName: '' };
 }
 
@@ -179,6 +207,7 @@ function strategyDescriptor(s: IdentifyStrategy): string {
   switch (s.kind) {
     case 'open-sf-tab': return 'detected from open SF tab';
     case 'learned-mapping': return 'remembered from last log';
+    case 'contact-scoped-picker': return `Opps for ${s.contact.name}`;
     case 'picker': return 'pick from recent records';
     case 'manual': return 'paste manually';
   }

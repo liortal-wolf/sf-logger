@@ -2,6 +2,7 @@ export const popupHTML = (data: {
   opportunityName: string;
   accountName: string;
   strategyLabel: string;
+  contactScopedHint?: string;
   subject: string;
   description: string;
   pickerChoices: Array<{ id: string; name: string; accountName?: string }>;
@@ -18,6 +19,7 @@ export const popupHTML = (data: {
   <div class="dsfl-popup__body">
     <div class="dsfl-popup__field">
       <label class="dsfl-popup__strategy-label">Source <span class="dsfl-popup__strategy">(${escapeHTML(data.strategyLabel)})</span></label>
+      ${data.contactScopedHint ? `<div class="dsfl-popup__hint">${escapeHTML(data.contactScopedHint)}</div>` : ''}
       <div class="dsfl-popup__target-grid">
         <div class="dsfl-popup__target-row">
           <span class="dsfl-popup__target-key">Opportunity</span>
