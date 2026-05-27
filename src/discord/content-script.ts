@@ -1,5 +1,5 @@
 import { injectButton } from './ui';
-import { captureDiscordTranscript, detectCounterpartyFromDocumentTitle } from './selection';
+import { captureDiscordTranscript, detectCounterparty } from './selection';
 import { getSettings } from '../storage/settings';
 import { summarizeForSalesforce, composeDescription } from '../anthropic/summarize';
 import { identifyTarget } from '../matching/identify';
@@ -7,6 +7,28 @@ import { showPopup } from '../popup/popup';
 import { buildSFTaskUrl } from '../salesforce/url-builder';
 import { recordMapping } from '../storage/mappings';
 import { listRecentContacts } from '../storage/recent-sf';
+
+// Discord's logged-in user has a unique ID embedded in several DOM places. We
+// read it once per click. The most reliable source we've found is the user
+// account panel at the bottom-left of the channel list — it carries the user's
+// own ID on a wrapper element. If we can't find it, fall back to undefined and
+// detectCounterparty will degrade to username-only matching.
+function readCurrentDiscordUserId(): string | null {
+  const candidates = [
+    '[class*="panels"] [class*="avatar"]',
+    '[data-list-item-id^="me-"]',
+    '[class*="container"][class*="userPanelOuter"]'
+  ];
+  for (const sel of candidates) {
+    const el = document.querySelector(sel);
+    const id =
+      el?.getAttribute('data-user-id') ??
+      el?.closest('[data-user-id]')?.getAttribute('data-user-id') ??
+      el?.closest('[data-list-item-id^="me-"]')?.getAttribute('data-list-item-id')?.replace(/^me-/, '');
+    if (id && /^\d{15,21}$/.test(id)) return id;
+  }
+  return null;
+}
 
 // SF's defaultFieldValues silently truncates around 1500-2000 chars of total URL.
 // For long descriptions we put a placeholder in the URL and queue the full text
@@ -36,7 +58,11 @@ async function handleLogClick(): Promise<void> {
     `[discord-sf-logger] captured ${captured.messageCount} messages via ${captured.source}:`,
     captured.text
   );
-  const counterparty = detectCounterpartyFromDocumentTitle(document.title);
+  const counterparty = detectCounterparty(readCurrentDiscordUserId());
+  if (!counterparty) {
+    alert('Discord → SF Logger: could not detect the conversation. Open a 1:1 DM or channel and try again.');
+    return;
+  }
 
   const strategy = identifyTarget({ counterparty });
 
@@ -46,7 +72,7 @@ async function handleLogClick(): Promise<void> {
       apiKey: settings.anthropicApiKey,
       model: settings.anthropicModel,
       transcript: captured.text,
-      counterparty
+      counterparty: counterparty.username
     });
   } catch (err) {
     console.error('[discord-sf-logger] Anthropic call failed, falling back to subject="general update"', err);
@@ -96,7 +122,5 @@ async function handleLogClick(): Promise<void> {
 
   GM_openInTab(fullUrl, { active: true });
 
-  if (counterparty) {
-    recordMapping(counterparty, result.oppId, result.oppName);
-  }
+  recordMapping(counterparty, result.oppId, result.oppName);
 }
