@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discord → Salesforce Logger
 // @namespace    https://github.com/liortal-wolf/sf-logger
-// @version      0.2.1
+// @version      0.3.0
 // @author       Overwolf
 // @description  Log highlighted Discord conversations to Salesforce Opportunities with AI summaries
 // @supportURL   https://github.com/liortal-wolf/sf-logger/issues
@@ -910,27 +910,140 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		GM_openInTab(fullUrl, { active: true });
 		recordMapping(counterparty, result.oppId, result.oppName);
 	}
+	var API_BASE = `/services/data/v60.0/ui-api`;
+	var sessionBlocked = false;
+	function logFetchFailure(endpoint, reason) {
+		console.warn(`[discord-sf-logger] UI API ${endpoint} failed: ${reason}`);
+	}
+	async function fetchJson(path) {
+		if (sessionBlocked) return null;
+		let res;
+		try {
+			res = await fetch(path, { credentials: "same-origin" });
+		} catch (err) {
+			logFetchFailure(path, `network error: ${err instanceof Error ? err.message : String(err)}`);
+			return null;
+		}
+		if (res.status === 401 || res.status === 403) {
+			sessionBlocked = true;
+			logFetchFailure(path, `auth ${res.status} — pausing UI API for the rest of this session`);
+			return null;
+		}
+		if (!res.ok) {
+			logFetchFailure(path, `HTTP ${res.status}`);
+			return null;
+		}
+		try {
+			return await res.json();
+		} catch (err) {
+			logFetchFailure(path, `malformed JSON: ${err instanceof Error ? err.message : String(err)}`);
+			return null;
+		}
+	}
+	function readFieldValue(field) {
+		if (!field) return null;
+		const v = field.value;
+		return typeof v === "string" ? v : null;
+	}
+	function readAccountFromRecord(fields) {
+		if (!fields) return void 0;
+		const accountField = fields.Account;
+		const accountId = readFieldValue(fields.AccountId);
+		const accountName = accountField?.displayValue ?? null;
+		const nestedId = accountField?.value && typeof accountField.value === "object" && "id" in accountField.value ? accountField.value.id : void 0;
+		const id = accountId ?? (typeof nestedId === "string" ? nestedId : null);
+		if (id && accountName) return {
+			id,
+			name: accountName
+		};
+	}
+	async function fetchContact(id) {
+		const body = await fetchJson(`${API_BASE}/records/${id}?fields=${[
+			"Contact.Name",
+			"Contact.Discord__c",
+			"Contact.AccountId",
+			"Contact.Account.Name"
+		].join(",")}`);
+		if (!body?.fields) return null;
+		const name = readFieldValue(body.fields.Name);
+		if (!name || !body.id) return null;
+		return {
+			id: body.id,
+			name,
+			discordUsername: readFieldValue(body.fields.Discord__c),
+			account: readAccountFromRecord(body.fields)
+		};
+	}
+	async function fetchOpportunity(id) {
+		const body = await fetchJson(`${API_BASE}/records/${id}?fields=${[
+			"Opportunity.Name",
+			"Opportunity.StageName",
+			"Opportunity.AccountId",
+			"Opportunity.Account.Name"
+		].join(",")}`);
+		if (!body) return null;
+		return parseOppRecord(body);
+	}
+	function parseOppRecord(rec) {
+		if (!rec.fields || !rec.id) return null;
+		const name = readFieldValue(rec.fields.Name);
+		if (!name) return null;
+		const stage = rec.fields.StageName?.displayValue ?? readFieldValue(rec.fields.StageName) ?? void 0;
+		return {
+			id: rec.id,
+			name,
+			stage,
+			account: readAccountFromRecord(rec.fields)
+		};
+	}
+	async function fetchContactRelatedOpps(contactId) {
+		const body = await fetchJson(`${API_BASE}/related-list-records/${contactId}/Opportunities?fields=${[
+			"Opportunity.Name",
+			"Opportunity.StageName",
+			"Opportunity.Account.Name"
+		].join(",")}`);
+		if (!body?.records) return [];
+		const out = [];
+		for (const rec of body.records) {
+			const parsed = parseOppRecord(rec);
+			if (parsed) out.push(parsed);
+		}
+		return out;
+	}
+	async function fetchOppContactRoles(oppId) {
+		const body = await fetchJson(`${API_BASE}/related-list-records/${oppId}/OpportunityContactRoles?fields=${["OpportunityContactRole.ContactId", "OpportunityContactRole.Contact.Name"].join(",")}`);
+		if (!body?.records) return [];
+		const out = [];
+		for (const rec of body.records) {
+			const contactId = readFieldValue(rec.fields?.ContactId);
+			if (!contactId) continue;
+			const contactName = rec.fields?.Contact?.displayValue ?? "";
+			out.push({
+				contactId,
+				contactName
+			});
+		}
+		return out;
+	}
 	var POLL_INTERVAL_MS = 2e3;
 	var PENDING_FILL_KEY = "pending_task_fill";
-	var MAX_EMPTY_SCRAPE_POLLS = 100;
-	var scrapedRecordIds = new Set();
-	var emptyScrapeCounts = new Map();
-	function shouldRetryScrape(recordId) {
-		if (scrapedRecordIds.has(recordId)) return false;
-		return (emptyScrapeCounts.get(recordId) ?? 0) < MAX_EMPTY_SCRAPE_POLLS;
+	var apiFetchState = new Map();
+	var MAX_API_RETRIES = 3;
+	function shouldCallApi(key) {
+		const s = apiFetchState.get(key);
+		if (s === "success" || s === "failed-permanently") return false;
+		return true;
 	}
-	function markScrapeSuccess(recordId) {
-		scrapedRecordIds.add(recordId);
-		emptyScrapeCounts.delete(recordId);
+	function recordApiAttemptResult(key, ok) {
+		if (ok) {
+			apiFetchState.set(key, "success");
+			return;
+		}
+		const prior = apiFetchState.get(key);
+		const failures = (typeof prior === "object" ? prior.failures : 0) + 1;
+		if (failures >= MAX_API_RETRIES) apiFetchState.set(key, "failed-permanently");
+		else apiFetchState.set(key, { failures });
 	}
-	function markScrapeEmpty(recordId) {
-		const n = (emptyScrapeCounts.get(recordId) ?? 0) + 1;
-		emptyScrapeCounts.set(recordId, n);
-		if (n >= MAX_EMPTY_SCRAPE_POLLS) scrapedRecordIds.add(recordId);
-	}
-	var RELATED_LIST_COUNT_RE = /\(\s*\d+\s*\)\s*$/;
-	var ACTION_LABEL_RE = /^(View|Add|Edit|New|Delete|Show|Hide|Clone|Share|Print|Export|Import|Manage|All|Save|Cancel)\b/i;
-	var RELATED_LIST_LABEL_RE = /^(Account Team|Contact Roles|Notes|Files|Activity|Activities|Cases|Opportunities|Tasks|Events|Campaign History|Quotes|Orders)\b/i;
 	function startSalesforceWatcher() {
 		const tick = () => {
 			const page = parseLightningUrl(window.location.href);
@@ -947,96 +1060,67 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		tick();
 	}
 	function updateOpportunity(id) {
-		const name = readRecordName();
-		const account = readLinkedAccount();
-		let contactsToWrite;
-		if (shouldRetryScrape(`opp-contacts:${id}`)) {
-			const contacts = readOppContactRoles();
-			if (contacts.length > 0) {
+		const key = `opp:${id}`;
+		if (!shouldCallApi(key)) return;
+		(async () => {
+			try {
+				const [opp, contactRoles] = await Promise.all([fetchOpportunity(id), fetchOppContactRoles(id)]);
+				if (!opp) {
+					recordApiAttemptResult(key, false);
+					return;
+				}
 				const now = new Date().toISOString();
-				contactsToWrite = contacts.map((c) => ({
-					...c,
-					lastSeenAt: now
-				}));
-				markScrapeSuccess(`opp-contacts:${id}`);
-				console.log(`[discord-sf-logger] cached ${contacts.length} Contact Roles for Opp ${id}`);
-			} else {
-				const emptyCount = (emptyScrapeCounts.get(`opp-contacts:${id}`) ?? 0) + 1;
-				if (emptyCount === 1 || emptyCount === 5) console.log(`[discord-sf-logger] no Contact Roles found yet for Opp ${id} (poll ${emptyCount}). If this Opp has Contact Roles, click the Opp's "Related" tab so they render.`);
-				markScrapeEmpty(`opp-contacts:${id}`);
+				recordVisit({
+					id: opp.id,
+					name: opp.name,
+					account: opp.account,
+					contacts: contactRoles.map((r) => ({
+						id: r.contactId,
+						name: r.contactName,
+						lastSeenAt: now
+					}))
+				});
+				recordApiAttemptResult(key, true);
+				const parts = [opp.name];
+				if (opp.account?.name) parts.push(`(${opp.account.name})`);
+				showToast(`Cached Opportunity ${parts.join(" ")}`, "success");
+			} catch {
+				recordApiAttemptResult(key, false);
 			}
-		}
-		const existing = listRecent().find((r) => r.id === id);
-		const hasGoodName = existing && existing.name !== existing.id;
-		const cachedAccountIsBad = existing?.account?.name ? isBadAccountName(existing.account.name) : false;
-		if (!(!existing || name && !hasGoodName || account && (!existing.account || cachedAccountIsBad) || cachedAccountIsBad || !!contactsToWrite)) {
-			recordVisit({
-				id,
-				name: existing.name,
-				account: existing.account,
-				contacts: existing.contacts
-			});
-			return;
-		}
-		const finalAccount = account ?? (cachedAccountIsBad ? void 0 : existing?.account);
-		recordVisit({
-			id,
-			name: name ?? existing?.name ?? id,
-			account: finalAccount,
-			contacts: contactsToWrite ?? existing?.contacts
-		});
-		if (!existing || name && !hasGoodName || account && (!existing.account || cachedAccountIsBad)) {
-			const parts = [];
-			if (name) parts.push(name);
-			if (finalAccount?.name) parts.push(`(${finalAccount.name})`);
-			showToast(`Cached Opportunity ${parts.join(" ")}`, "success");
-		} else if (!account) console.log(`[discord-sf-logger] no canonical Account link found yet for Opp ${id} — will keep trying`);
+		})();
 	}
 	function updateContact(id) {
-		const name = readRecordName();
-		const discordUsername = readContactDiscordUsername();
-		let oppsToWrite;
-		if (shouldRetryScrape(`contact-opps:${id}`)) {
-			const opps = readContactRelatedOpps();
-			if (opps.length > 0) {
+		const key = `contact:${id}`;
+		if (!shouldCallApi(key)) return;
+		(async () => {
+			try {
+				const [contact, opps] = await Promise.all([fetchContact(id), fetchContactRelatedOpps(id)]);
+				if (!contact) {
+					recordApiAttemptResult(key, false);
+					return;
+				}
 				const now = new Date().toISOString();
-				oppsToWrite = opps.map((o) => ({
-					...o,
-					lastSeenAt: now
-				}));
-				markScrapeSuccess(`contact-opps:${id}`);
-				console.log(`[discord-sf-logger] cached ${opps.length} related Opps for Contact ${id}`);
-			} else {
-				const emptyCount = (emptyScrapeCounts.get(`contact-opps:${id}`) ?? 0) + 1;
-				if (emptyCount === 1 || emptyCount === 5) console.log(`[discord-sf-logger] no related Opps found yet for Contact ${id} (poll ${emptyCount}). If this Contact has Opps, click the Contact's "Related" tab so they render.`);
-				markScrapeEmpty(`contact-opps:${id}`);
+				recordContactVisit({
+					id: contact.id,
+					name: contact.name,
+					discordUsername: contact.discordUsername ?? void 0,
+					opps: opps.map((o) => ({
+						id: o.id,
+						name: o.name,
+						stage: o.stage,
+						accountName: o.account?.name,
+						lastSeenAt: now
+					}))
+				});
+				recordApiAttemptResult(key, true);
+				const parts = [contact.name];
+				if (contact.discordUsername) parts.push(`(@${contact.discordUsername})`);
+				const tail = opps.length > 0 ? ` — ${opps.length} ${opps.length === 1 ? "Opp" : "Opps"}` : "";
+				showToast(`Cached Contact ${parts.join(" ")}${tail}`, "success");
+			} catch {
+				recordApiAttemptResult(key, false);
 			}
-		}
-		const existing = listRecentContacts().find((c) => c.id === id);
-		const hasGoodName = existing && existing.name !== existing.id;
-		const hasDiscordUsername = !!existing?.discordUsername;
-		if (!(!existing || name && !hasGoodName || discordUsername && !hasDiscordUsername || !!oppsToWrite)) {
-			recordContactVisit({
-				id,
-				name: existing.name,
-				discordUsername: existing.discordUsername,
-				discordUserId: existing.discordUserId
-			});
-			return;
-		}
-		recordContactVisit({
-			id,
-			name: name ?? existing?.name ?? id,
-			discordUsername: discordUsername ?? existing?.discordUsername,
-			discordUserId: existing?.discordUserId,
-			opps: oppsToWrite
-		});
-		if (!existing || name && !hasGoodName || discordUsername && !hasDiscordUsername) {
-			const parts = [];
-			if (name) parts.push(name);
-			if (discordUsername) parts.push(`(@${discordUsername})`);
-			showToast(`Cached Contact ${parts.join(" ")}`, "success");
-		}
+		})();
 	}
 	function parseLightningUrl(url) {
 		const match = url.match(/\/lightning\/r\/(Opportunity|Account|Contact)\/([a-zA-Z0-9]{11,18})/);
@@ -1045,219 +1129,6 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			type: match[1],
 			id: match[2]
 		};
-	}
-	function readRecordName() {
-		const fromTitle = parseSFTitle(document.title);
-		if (fromTitle) return fromTitle;
-		const headerText = document.querySelector("h1.slds-page-header__title, h1.slds-var-p-around_xx-small")?.textContent?.trim();
-		if (headerText && headerText.length > 0 && !looksLikeSFId(headerText)) return headerText;
-		const lwcText = document.querySelector("records-highlights2 lightning-formatted-text, records-highlights2 lightning-formatted-name, [data-target-selection-name*=\"Name\"] lightning-formatted-text")?.textContent?.trim();
-		if (lwcText && lwcText.length > 0 && !looksLikeSFId(lwcText)) return lwcText;
-		return null;
-	}
-	function parseSFTitle(title) {
-		const m1 = title.match(/^(.+?)\s*\|\s*(?:Opportunity|Account|Contact)\s*\|\s*Salesforce/i);
-		if (m1) return m1[1].trim();
-		const m2 = title.match(/^(.+?)\s*\|\s*Salesforce\s*$/i);
-		if (m2 && !looksLikeSFId(m2[1].trim())) return m2[1].trim();
-		return null;
-	}
-	function looksLikeSFId(s) {
-		return /^[a-zA-Z0-9]{15,18}$/.test(s);
-	}
-	function isBadAccountName(s) {
-		return RELATED_LIST_COUNT_RE.test(s) || ACTION_LABEL_RE.test(s) || RELATED_LIST_LABEL_RE.test(s) || looksLikeSFId(s);
-	}
-	function findAllAccountLinks() {
-		const results = [];
-		const visited = new WeakSet();
-		const walk = (root) => {
-			if (visited.has(root)) return;
-			visited.add(root);
-			const anchors = root.querySelectorAll("a[href*=\"/Account/\"]");
-			for (const a of anchors) if (/\/Account\/[a-zA-Z0-9]{11,18}/.test(a.href)) results.push(a);
-			for (const el of Array.from(root.querySelectorAll("*"))) {
-				const sr = el.shadowRoot;
-				if (sr) walk(sr);
-			}
-		};
-		walk(document);
-		return results;
-	}
-	function locateAnchor(link) {
-		let el = link;
-		while (el) {
-			if (el instanceof Element) {
-				const tag = el.tagName.toUpperCase();
-				if (tag === "RECORDS-HIGHLIGHTS2" || tag === "FORCE-HIGHLIGHTS" || el.classList.contains("slds-page-header")) return "highlights";
-				if (tag.startsWith("FORCE-RELATED-LIST") || tag === "FORCE-LST-COMMON-LIST-VIEW" || el.classList.contains("slds-card") && el.querySelector("header")?.textContent?.match(/\(\d+\)/)) return "related-list";
-			}
-			const root = el.getRootNode();
-			if (root instanceof ShadowRoot) el = root.host;
-			else if (el instanceof Element) el = el.parentElement;
-			else el = null;
-		}
-		return "other";
-	}
-	function readLinkedAccount() {
-		const scored = findAllAccountLinks().map((link) => {
-			const text = readVisibleText(link);
-			const id = link.href.match(/\/Account\/([a-zA-Z0-9]{11,18})/)?.[1] ?? "";
-			if (!id || !text) return {
-				link,
-				text,
-				id,
-				score: 9999,
-				reason: "no id/text"
-			};
-			if (isBadAccountName(text)) return {
-				link,
-				text,
-				id,
-				score: 9999,
-				reason: "bad text"
-			};
-			let score = 0;
-			const reasons = [];
-			const loc = locateAnchor(link);
-			if (loc === "highlights") {
-				score -= 50;
-				reasons.push("highlights");
-			} else if (loc === "related-list") {
-				score += 100;
-				reasons.push("related-list");
-			} else reasons.push("other-location");
-			if (/\/Account\/[a-zA-Z0-9]+\/view\s*$/.test(link.href)) {
-				score -= 10;
-				reasons.push("clean-view");
-			} else if (/\/Account\/[a-zA-Z0-9]+\/view\?/.test(link.href)) {
-				score += 30;
-				reasons.push("view-with-query");
-			} else if (/\/Account\/[a-zA-Z0-9]+\/related\//.test(link.href)) {
-				score += 100;
-				reasons.push("related-path");
-			} else reasons.push("other-href");
-			return {
-				link,
-				text,
-				id,
-				score,
-				reason: reasons.join(",")
-			};
-		});
-		scored.sort((a, b) => a.score - b.score);
-		console.log(`[discord-sf-logger] account candidates: ${scored.length} found`, scored.slice(0, 6).map((c) => ({
-			text: c.text,
-			href: c.link.href,
-			score: c.score,
-			reason: c.reason
-		})));
-		const best = scored[0];
-		if (best && best.score < 100) return {
-			name: best.text,
-			id: best.id
-		};
-		const fromLabel = readAccountFromLabeledField();
-		if (fromLabel) {
-			console.log("[discord-sf-logger] account captured via label fallback:", fromLabel);
-			return fromLabel;
-		}
-		return null;
-	}
-	function readAccountFromLabeledField() {
-		const items = findAllInShadow("records-record-layout-item, records-highlights-details-item, force-record-layout-item, .slds-form-element");
-		for (const item of items) {
-			const labelText = readLabelInside(item);
-			if (!labelText) continue;
-			const labelLower = labelText.toLowerCase();
-			if (labelLower !== "account name" && labelLower !== "account") continue;
-			let id = "";
-			const innerAnchor = queryDeep(item, "a[href*=\"/Account/\"]");
-			if (innerAnchor) {
-				const m = innerAnchor.href.match(/\/Account\/([a-zA-Z0-9]{11,18})/);
-				if (m) id = m[1];
-			}
-			const text = readValueInside(item, labelText);
-			if (text && !isBadAccountName(text)) {
-				if (id) return {
-					name: text,
-					id
-				};
-				console.log("[discord-sf-logger] account name found but no id; storing name only", text);
-				return {
-					name: text,
-					id: ""
-				};
-			}
-		}
-		return null;
-	}
-	function readContactDiscordUsername() {
-		const items = findAllInShadow("records-record-layout-item, records-highlights-details-item, force-record-layout-item, .slds-form-element");
-		for (const item of items) {
-			const labelText = readLabelInside(item);
-			if (!labelText || !/^discord\b/i.test(labelText)) continue;
-			const value = readValueInside(item, labelText);
-			if (value && value !== "-" && value !== "—") return value.replace(/^@/, "");
-		}
-		return readDiscordFromVisibleText();
-	}
-	function queryDeep(el, selector) {
-		const visited = new WeakSet();
-		let found = null;
-		const walk = (root) => {
-			if (found || visited.has(root)) return;
-			visited.add(root);
-			const hit = root.querySelector(selector);
-			if (hit) {
-				found = hit;
-				return;
-			}
-			for (const child of Array.from(root.querySelectorAll("*"))) {
-				if (found) return;
-				const sr = child.shadowRoot;
-				if (sr) walk(sr);
-			}
-		};
-		walk(el);
-		return found;
-	}
-	function readLabelInside(item) {
-		const el = queryDeep(item, ".slds-form-element__label, .test-id__field-label, label, .field-label");
-		if (!el) return null;
-		return readVisibleText(el) || null;
-	}
-	function readValueInside(item, labelText) {
-		const el = queryDeep(item, "a[href*=\"/Account/\"], lightning-formatted-text, lightning-formatted-name, lightning-formatted-rich-text, records-formula-output, records-output-field, .slds-form-element__static, .test-id__field-value");
-		if (el) {
-			const t = readVisibleText(el);
-			if (t && t !== "-" && t !== "—" && t.toLowerCase() !== labelText.toLowerCase() && !looksLikeButtonOrLabel(t, labelText)) return t;
-		}
-		const itemText = readVisibleText(item);
-		if (itemText) {
-			const remainder = itemText.startsWith(labelText) ? itemText.slice(labelText.length).trim() : itemText;
-			if (remainder && remainder !== "-" && remainder !== "—" && remainder.length < 200 && !looksLikeButtonOrLabel(remainder, labelText)) return remainder;
-		}
-		return null;
-	}
-	function looksLikeButtonOrLabel(value, labelText) {
-		if (/^(Edit|View|Add|New|Delete|Clone|Share|Help)\b/i.test(value)) return true;
-		if (new RegExp(`^Edit\\s+${escapeForRegex(labelText)}\\b`, "i").test(value)) return true;
-		return false;
-	}
-	function escapeForRegex(s) {
-		return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-	}
-	function readVisibleText(el) {
-		return (el.innerText ?? el.textContent ?? "").trim();
-	}
-	function readDiscordFromVisibleText() {
-		const match = (document.body?.innerText ?? "").match(/(?:^|\n)\s*Discord\s*\n+\s*([^\n]+?)\s*(?:\n|$)/);
-		if (!match) return null;
-		const value = match[1].trim();
-		if (!value || value === "-" || value === "—" || value.length > 80) return null;
-		if (/^(Edit|Title|Phone|Email|Account|Owner|Department|Mailing|Other|Reports To|Birthdate)\b/i.test(value)) return null;
-		return value.replace(/^@/, "");
 	}
 	function findAllInShadow(selector) {
 		const results = [];
@@ -1362,60 +1233,6 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		});
 		(document.body || document.documentElement).appendChild(toastContainer);
 	}
-	function parseContactRelatedOppsFromDom(root) {
-		const anchors = Array.from(root.querySelectorAll("a[href*=\"/Opportunity/\"]"));
-		const seen = new Map();
-		for (const a of anchors) {
-			const m = (a.getAttribute("href") ?? a.href).match(/\/Opportunity\/([a-zA-Z0-9]{11,18})/);
-			if (!m) continue;
-			const id = m[1];
-			if (seen.has(id)) continue;
-			const name = readVisibleText(a);
-			if (!name) continue;
-			seen.set(id, {
-				id,
-				name
-			});
-		}
-		return Array.from(seen.values());
-	}
-	function readContactRelatedOpps() {
-		const containers = findAllInShadow("force-related-list-single-container, lst-related-list-single-container, records-related-list-single-container, .forceRelatedList");
-		const fakeRoot = document.createElement("div");
-		for (const c of containers) fakeRoot.appendChild(c.cloneNode(true));
-		if (fakeRoot.children.length === 0) {
-			const allOppAnchors = findAllInShadow("a[href*=\"/Opportunity/\"]");
-			for (const a of allOppAnchors) fakeRoot.appendChild(a.cloneNode(true));
-		}
-		return parseContactRelatedOppsFromDom(fakeRoot);
-	}
-	function parseOppContactRolesFromDom(root) {
-		const anchors = Array.from(root.querySelectorAll("a[href*=\"/Contact/\"]"));
-		const seen = new Map();
-		for (const a of anchors) {
-			const m = (a.getAttribute("href") ?? "").match(/\/Contact\/([a-zA-Z0-9]{11,18})/);
-			if (!m) continue;
-			const id = m[1];
-			if (seen.has(id)) continue;
-			const name = readVisibleText(a);
-			if (!name) continue;
-			seen.set(id, {
-				id,
-				name
-			});
-		}
-		return Array.from(seen.values());
-	}
-	function readOppContactRoles() {
-		const containers = findAllInShadow("force-related-list-single-container, lst-related-list-single-container, records-related-list-single-container, .forceRelatedList");
-		const fakeRoot = document.createElement("div");
-		for (const c of containers) fakeRoot.appendChild(c.cloneNode(true));
-		if (fakeRoot.children.length === 0) {
-			const allContactAnchors = findAllInShadow("a[href*=\"/Contact/\"]");
-			for (const a of allContactAnchors) fakeRoot.appendChild(a.cloneNode(true));
-		}
-		return parseOppContactRolesFromDom(fakeRoot);
-	}
 	function registerSettingsMenu() {
 		GM_registerMenuCommand("Discord → SF: Set Anthropic API key", () => {
 			const current = getSettings().anthropicApiKey;
@@ -1450,7 +1267,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		GM_deleteValue("learned_mappings");
 		console.log("[discord-sf-logger] local cache cleared");
 	}
-	console.log(`%c[discord-sf-logger] loaded build 2026-05-28-handle-fix on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
+	console.log(`%c[discord-sf-logger] loaded build 2026-05-28-ui-api on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
 	registerSettingsMenu();
 	var host = window.location.hostname;
 	if (host === "discord.com") startDiscordIntegration();
