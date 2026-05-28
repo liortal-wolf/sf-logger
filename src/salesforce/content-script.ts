@@ -3,9 +3,34 @@ import {
   recordContactVisit, listRecentContacts,
   type OpportunityVisitInput, type ContactVisitInput
 } from '../storage/recent-sf';
+import { fetchContact, fetchContactRelatedOpps } from './ui-api';
 
 const POLL_INTERVAL_MS = 2000;
 const PENDING_FILL_KEY = 'pending_task_fill';
+
+type ApiFetchState = 'success' | 'failed-permanently' | { failures: number };
+const apiFetchState = new Map<string, ApiFetchState>();
+const MAX_API_RETRIES = 3;
+
+function shouldCallApi(key: string): boolean {
+  const s = apiFetchState.get(key);
+  if (s === 'success' || s === 'failed-permanently') return false;
+  return true;
+}
+
+function recordApiAttemptResult(key: string, ok: boolean): void {
+  if (ok) {
+    apiFetchState.set(key, 'success');
+    return;
+  }
+  const prior = apiFetchState.get(key);
+  const failures = (typeof prior === 'object' ? prior.failures : 0) + 1;
+  if (failures >= MAX_API_RETRIES) {
+    apiFetchState.set(key, 'failed-permanently');
+  } else {
+    apiFetchState.set(key, { failures });
+  }
+}
 
 // Stop retrying after ~3 minutes of empty polls on a single record. Cheap
 // enough to keep trying for a while because the user may switch to the
@@ -128,64 +153,41 @@ function updateOpportunity(id: string): void {
 }
 
 function updateContact(id: string): void {
-  const name = readRecordName();
-  const discordUsername = readContactDiscordUsername();
+  const key = `contact:${id}`;
+  if (!shouldCallApi(key)) return;
 
-  let oppsToWrite: ContactVisitInput['opps'] | undefined;
-  if (shouldRetryScrape(`contact-opps:${id}`)) {
-    const opps = readContactRelatedOpps();
-    if (opps.length > 0) {
-      const now = new Date().toISOString();
-      oppsToWrite = opps.map(o => ({ ...o, lastSeenAt: now }));
-      markScrapeSuccess(`contact-opps:${id}`);
-      console.log(`[discord-sf-logger] cached ${opps.length} related Opps for Contact ${id}`);
-    } else {
-      const emptyCount = (emptyScrapeCounts.get(`contact-opps:${id}`) ?? 0) + 1;
-      if (emptyCount === 1 || emptyCount === 5) {
-        console.log(
-          `[discord-sf-logger] no related Opps found yet for Contact ${id} ` +
-          `(poll ${emptyCount}). ` +
-          `If this Contact has Opps, click the Contact's "Related" tab so they render.`
-        );
+  void (async () => {
+    try {
+      const [contact, opps] = await Promise.all([
+        fetchContact(id),
+        fetchContactRelatedOpps(id)
+      ]);
+      if (!contact) {
+        recordApiAttemptResult(key, false);
+        return;
       }
-      markScrapeEmpty(`contact-opps:${id}`);
+      const now = new Date().toISOString();
+      recordContactVisit({
+        id: contact.id,
+        name: contact.name,
+        discordUsername: contact.discordUsername ?? undefined,
+        opps: opps.map(o => ({
+          id: o.id,
+          name: o.name,
+          stage: o.stage,
+          accountName: o.account?.name,
+          lastSeenAt: now
+        }))
+      });
+      recordApiAttemptResult(key, true);
+      const parts: string[] = [contact.name];
+      if (contact.discordUsername) parts.push(`(@${contact.discordUsername})`);
+      const tail = opps.length > 0 ? ` — ${opps.length} ${opps.length === 1 ? 'Opp' : 'Opps'}` : '';
+      showToast(`Cached Contact ${parts.join(' ')}${tail}`, 'success');
+    } catch {
+      recordApiAttemptResult(key, false);
     }
-  }
-
-  const existing = listRecentContacts().find(c => c.id === id);
-  const hasGoodName = existing && existing.name !== existing.id;
-  const hasDiscordUsername = !!existing?.discordUsername;
-
-  const shouldUpdate =
-    !existing ||
-    (name && !hasGoodName) ||
-    (discordUsername && !hasDiscordUsername) ||
-    !!oppsToWrite;
-
-  if (!shouldUpdate) {
-    recordContactVisit({
-      id,
-      name: existing!.name,
-      discordUsername: existing!.discordUsername,
-      discordUserId: existing!.discordUserId
-    });
-    return;
-  }
-
-  recordContactVisit({
-    id,
-    name: name ?? existing?.name ?? id,
-    discordUsername: discordUsername ?? existing?.discordUsername,
-    discordUserId: existing?.discordUserId,
-    opps: oppsToWrite
-  });
-
-  if (!existing || (name && !hasGoodName) || (discordUsername && !hasDiscordUsername)) {
-    const parts: string[] = [];
-    if (name) parts.push(name);
-    if (discordUsername) parts.push(`(@${discordUsername})`);
-    showToast(`Cached Contact ${parts.join(' ')}`, 'success');
-  }
+  })();
 }
 
 function parseLightningUrl(
