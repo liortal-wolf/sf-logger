@@ -135,6 +135,27 @@ export async function fetchContactRelatedOpps(contactId: string): Promise<UiApiO
   return out;
 }
 
+export interface UiApiContactRole {
+  contactId: string;
+  contactName: string;
+}
+
+export async function fetchOppContactRoles(oppId: string): Promise<UiApiContactRole[]> {
+  const fields = ['OpportunityContactRole.ContactId', 'OpportunityContactRole.Contact.Name'].join(',');
+  const body = await fetchJson<RawRelatedListResponse>(
+    `${API_BASE}/related-list-records/${oppId}/OpportunityContactRoles?fields=${fields}`
+  );
+  if (!body?.records) return [];
+  const out: UiApiContactRole[] = [];
+  for (const rec of body.records) {
+    const contactId = readFieldValue(rec.fields?.ContactId);
+    if (!contactId) continue;
+    const contactName = rec.fields?.Contact?.displayValue ?? '';
+    out.push({ contactId, contactName });
+  }
+  return out;
+}
+
 export const __testing__ = {
   resetSessionState(): void { sessionBlocked = false; },
   isSessionBlocked(): boolean { return sessionBlocked; }

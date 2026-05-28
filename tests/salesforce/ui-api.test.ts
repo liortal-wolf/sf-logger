@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { fetchContact, fetchOpportunity, fetchContactRelatedOpps, __testing__ } from '../../src/salesforce/ui-api';
+import { fetchContact, fetchOpportunity, fetchContactRelatedOpps, fetchOppContactRoles, __testing__ } from '../../src/salesforce/ui-api';
 
 function mockFetchResponse(body: unknown, init: { ok?: boolean; status?: number } = {}) {
   return {
@@ -233,5 +233,59 @@ describe('fetchContactRelatedOpps', () => {
     const opps = await fetchContactRelatedOpps('003A');
     expect(opps).toHaveLength(1);
     expect(opps[0].id).toBe('006B');
+  });
+});
+
+describe('fetchOppContactRoles', () => {
+  it('returns parsed Contact Role records', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        records: [
+          {
+            id: '00KUZ00000NZ1td2AD',
+            apiName: 'OpportunityContactRole',
+            fields: {
+              ContactId: { value: '003UZ00000nM3JCYA0' },
+              Contact: { displayValue: 'Kesem', value: { id: '003UZ00000nM3JCYA0' } }
+            }
+          },
+          {
+            id: '00KUZ00000NZ2xyz',
+            apiName: 'OpportunityContactRole',
+            fields: {
+              ContactId: { value: '003UZ00000abcDef' },
+              Contact: { displayValue: 'Joe', value: { id: '003UZ00000abcDef' } }
+            }
+          }
+        ]
+      })
+    );
+
+    const roles = await fetchOppContactRoles('006A');
+    expect(roles).toEqual([
+      { contactId: '003UZ00000nM3JCYA0', contactName: 'Kesem' },
+      { contactId: '003UZ00000abcDef', contactName: 'Joe' }
+    ]);
+  });
+
+  it('returns empty array on 404', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({}, { ok: false, status: 404 })
+    );
+    expect(await fetchOppContactRoles('006A')).toEqual([]);
+  });
+
+  it('skips records missing ContactId', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        records: [
+          { id: '00K1', fields: { Contact: { displayValue: 'Headless' } } },
+          { id: '00K2', fields: { ContactId: { value: '003B' }, Contact: { displayValue: 'Good' } } }
+        ]
+      })
+    );
+    const roles = await fetchOppContactRoles('006A');
+    expect(roles).toHaveLength(1);
+    expect(roles[0].contactId).toBe('003B');
   });
 });
