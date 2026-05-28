@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { fetchContact, fetchOpportunity, __testing__ } from '../../src/salesforce/ui-api';
+import { fetchContact, fetchOpportunity, fetchContactRelatedOpps, __testing__ } from '../../src/salesforce/ui-api';
 
 function mockFetchResponse(body: unknown, init: { ok?: boolean; status?: number } = {}) {
   return {
@@ -161,5 +161,77 @@ describe('fetchOpportunity', () => {
       mockFetchResponse({}, { ok: false, status: 404 })
     );
     expect(await fetchOpportunity('006A')).toBeNull();
+  });
+});
+
+describe('fetchContactRelatedOpps', () => {
+  it('returns parsed Opp records from a Contact\'s Opportunities related list', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        count: 2,
+        records: [
+          {
+            id: '006UZ00000ZEz5tYAD',
+            apiName: 'Opportunity',
+            fields: {
+              Name: { value: 'test opp lior discord tool' },
+              StageName: { value: 'Reach Out', displayValue: 'Reach Out' },
+              Account: {
+                displayValue: 'Test Account - Lior Discord Tool',
+                value: { id: '001UZ00000qGFZpYAO' }
+              }
+            }
+          },
+          {
+            id: '006UZ00000AbcDef',
+            apiName: 'Opportunity',
+            fields: {
+              Name: { value: 'Other Opp' },
+              StageName: { value: 'Closed Won', displayValue: 'Closed Won' }
+            }
+          }
+        ]
+      })
+    );
+
+    const opps = await fetchContactRelatedOpps('003A');
+    expect(opps).toHaveLength(2);
+    expect(opps[0]).toEqual({
+      id: '006UZ00000ZEz5tYAD',
+      name: 'test opp lior discord tool',
+      stage: 'Reach Out',
+      account: { id: '001UZ00000qGFZpYAO', name: 'Test Account - Lior Discord Tool' }
+    });
+    expect(opps[1]).toEqual({
+      id: '006UZ00000AbcDef',
+      name: 'Other Opp',
+      stage: 'Closed Won'
+    });
+  });
+
+  it('returns empty array on 404 (no related list configured)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({}, { ok: false, status: 404 })
+    );
+    expect(await fetchContactRelatedOpps('003A')).toEqual([]);
+  });
+
+  it('returns empty array when records field is missing', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockFetchResponse({ count: 0 }));
+    expect(await fetchContactRelatedOpps('003A')).toEqual([]);
+  });
+
+  it('skips records missing a Name field', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        records: [
+          { id: '006A', fields: { StageName: { value: 'Prospecting' } } },
+          { id: '006B', fields: { Name: { value: 'Real Opp' } } }
+        ]
+      })
+    );
+    const opps = await fetchContactRelatedOpps('003A');
+    expect(opps).toHaveLength(1);
+    expect(opps[0].id).toBe('006B');
   });
 });

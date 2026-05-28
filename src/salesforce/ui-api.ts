@@ -114,6 +114,39 @@ export async function fetchOpportunity(id: string): Promise<UiApiOpportunity | n
   };
 }
 
+interface RawRelatedListResponse {
+  records?: RawUiRecord[];
+}
+
+// Helper: turn a single Opp record from a related-list response into our
+// internal UiApiOpportunity shape. Same parsing logic as fetchOpportunity.
+function parseOppRecord(rec: RawUiRecord): UiApiOpportunity | null {
+  if (!rec.fields || !rec.id) return null;
+  const name = readFieldValue(rec.fields.Name);
+  if (!name) return null;
+  const stage = rec.fields.StageName?.displayValue ?? readFieldValue(rec.fields.StageName) ?? undefined;
+  return {
+    id: rec.id,
+    name,
+    stage,
+    account: readAccountFromRecord(rec.fields)
+  };
+}
+
+export async function fetchContactRelatedOpps(contactId: string): Promise<UiApiOpportunity[]> {
+  const fields = ['Opportunity.Name', 'Opportunity.StageName', 'Opportunity.Account.Name'].join(',');
+  const body = await fetchJson<RawRelatedListResponse>(
+    `${API_BASE}/related-list-records/${contactId}/Opportunities?fields=${fields}`
+  );
+  if (!body?.records) return [];
+  const out: UiApiOpportunity[] = [];
+  for (const rec of body.records) {
+    const parsed = parseOppRecord(rec);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+}
+
 export const __testing__ = {
   resetSessionState(): void { sessionBlocked = false; },
   isSessionBlocked(): boolean { return sessionBlocked; }
