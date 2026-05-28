@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { fetchContact, __testing__ } from '../../src/salesforce/ui-api';
+import { fetchContact, fetchOpportunity, __testing__ } from '../../src/salesforce/ui-api';
 
 function mockFetchResponse(body: unknown, init: { ok?: boolean; status?: number } = {}) {
   return {
@@ -106,5 +106,60 @@ describe('fetchContact', () => {
     const c = await fetchContact('003A');
     expect(c?.account).toEqual({ id: '001A', name: 'Acme Inc' });
     expect(c?.discordUsername).toBeNull();
+  });
+});
+
+describe('fetchOpportunity', () => {
+  it('returns the parsed Opportunity on a successful response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        id: '006UZ00000ZEz5tYAD',
+        apiName: 'Opportunity',
+        fields: {
+          Name: { value: 'test opp lior discord tool' },
+          StageName: { value: 'Reach Out', displayValue: 'Reach Out' },
+          AccountId: { value: '001UZ00000qGFZpYAO' },
+          Account: {
+            displayValue: 'Test Account - Lior Discord Tool',
+            value: { id: '001UZ00000qGFZpYAO' }
+          }
+        }
+      })
+    );
+
+    const o = await fetchOpportunity('006UZ00000ZEz5tYAD');
+    expect(o).toEqual({
+      id: '006UZ00000ZEz5tYAD',
+      name: 'test opp lior discord tool',
+      stage: 'Reach Out',
+      account: { id: '001UZ00000qGFZpYAO', name: 'Test Account - Lior Discord Tool' }
+    });
+  });
+
+  it('returns null when the record has no Name field', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({ id: '006A', fields: { StageName: { value: 'Closed' } } })
+    );
+    expect(await fetchOpportunity('006A')).toBeNull();
+  });
+
+  it('omits stage when StageName is missing', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        id: '006A',
+        fields: { Name: { value: 'Acme Renewal' } }
+      })
+    );
+    const o = await fetchOpportunity('006A');
+    expect(o?.name).toBe('Acme Renewal');
+    expect(o?.stage).toBeUndefined();
+    expect(o?.account).toBeUndefined();
+  });
+
+  it('returns null on 404', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({}, { ok: false, status: 404 })
+    );
+    expect(await fetchOpportunity('006A')).toBeNull();
   });
 });
