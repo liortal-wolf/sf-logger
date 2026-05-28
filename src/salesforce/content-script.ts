@@ -3,7 +3,7 @@ import {
   recordContactVisit, listRecentContacts,
   type OpportunityVisitInput, type ContactVisitInput
 } from '../storage/recent-sf';
-import { fetchContact, fetchContactRelatedOpps } from './ui-api';
+import { fetchContact, fetchContactRelatedOpps, fetchOpportunity, fetchOppContactRoles } from './ui-api';
 
 const POLL_INTERVAL_MS = 2000;
 const PENDING_FILL_KEY = 'pending_task_fill';
@@ -88,68 +88,38 @@ export function startSalesforceWatcher(): void {
 }
 
 function updateOpportunity(id: string): void {
-  const name = readRecordName();
-  const account = readLinkedAccount();
+  const key = `opp:${id}`;
+  if (!shouldCallApi(key)) return;
 
-  let contactsToWrite: OpportunityVisitInput['contacts'] | undefined;
-  if (shouldRetryScrape(`opp-contacts:${id}`)) {
-    const contacts = readOppContactRoles();
-    if (contacts.length > 0) {
-      const now = new Date().toISOString();
-      contactsToWrite = contacts.map(c => ({ ...c, lastSeenAt: now }));
-      markScrapeSuccess(`opp-contacts:${id}`);
-      console.log(`[discord-sf-logger] cached ${contacts.length} Contact Roles for Opp ${id}`);
-    } else {
-      const emptyCount = (emptyScrapeCounts.get(`opp-contacts:${id}`) ?? 0) + 1;
-      if (emptyCount === 1 || emptyCount === 5) {
-        console.log(
-          `[discord-sf-logger] no Contact Roles found yet for Opp ${id} ` +
-          `(poll ${emptyCount}). ` +
-          `If this Opp has Contact Roles, click the Opp's "Related" tab so they render.`
-        );
+  void (async () => {
+    try {
+      const [opp, contactRoles] = await Promise.all([
+        fetchOpportunity(id),
+        fetchOppContactRoles(id)
+      ]);
+      if (!opp) {
+        recordApiAttemptResult(key, false);
+        return;
       }
-      markScrapeEmpty(`opp-contacts:${id}`);
+      const now = new Date().toISOString();
+      recordVisit({
+        id: opp.id,
+        name: opp.name,
+        account: opp.account,
+        contacts: contactRoles.map(r => ({
+          id: r.contactId,
+          name: r.contactName,
+          lastSeenAt: now
+        }))
+      });
+      recordApiAttemptResult(key, true);
+      const parts: string[] = [opp.name];
+      if (opp.account?.name) parts.push(`(${opp.account.name})`);
+      showToast(`Cached Opportunity ${parts.join(' ')}`, 'success');
+    } catch {
+      recordApiAttemptResult(key, false);
     }
-  }
-
-  const existing = listRecent().find(r => r.id === id);
-  const hasGoodName = existing && existing.name !== existing.id;
-  const cachedAccountIsBad = existing?.account?.name ? isBadAccountName(existing.account.name) : false;
-
-  const shouldUpdate =
-    !existing ||
-    (name && !hasGoodName) ||
-    (account && (!existing.account || cachedAccountIsBad)) ||
-    cachedAccountIsBad ||
-    !!contactsToWrite;
-
-  if (!shouldUpdate) {
-    recordVisit({
-      id,
-      name: existing!.name,
-      account: existing!.account,
-      contacts: existing!.contacts
-    });
-    return;
-  }
-
-  const finalAccount = account ?? (cachedAccountIsBad ? undefined : existing?.account);
-
-  recordVisit({
-    id,
-    name: name ?? existing?.name ?? id,
-    account: finalAccount,
-    contacts: contactsToWrite ?? existing?.contacts
-  });
-
-  if (!existing || (name && !hasGoodName) || (account && (!existing.account || cachedAccountIsBad))) {
-    const parts: string[] = [];
-    if (name) parts.push(name);
-    if (finalAccount?.name) parts.push(`(${finalAccount.name})`);
-    showToast(`Cached Opportunity ${parts.join(' ')}`, 'success');
-  } else if (!account) {
-    console.log(`[discord-sf-logger] no canonical Account link found yet for Opp ${id} — will keep trying`);
-  }
+  })();
 }
 
 function updateContact(id: string): void {
