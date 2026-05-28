@@ -98,20 +98,8 @@ export interface UiApiOpportunity {
 export async function fetchOpportunity(id: string): Promise<UiApiOpportunity | null> {
   const fields = ['Opportunity.Name', 'Opportunity.StageName', 'Opportunity.AccountId', 'Opportunity.Account.Name'].join(',');
   const body = await fetchJson<RawUiRecord>(`${API_BASE}/records/${id}?fields=${fields}`);
-  if (!body?.fields) return null;
-  const name = readFieldValue(body.fields.Name);
-  if (!name || !body.id) return null;
-  // Prefer displayValue for StageName (it's the user-facing picklist label);
-  // fall back to value for orgs without translations enabled.
-  const stageDisplay = body.fields.StageName?.displayValue ?? null;
-  const stageValue = readFieldValue(body.fields.StageName);
-  const stage = stageDisplay ?? stageValue ?? undefined;
-  return {
-    id: body.id,
-    name,
-    stage,
-    account: readAccountFromRecord(body.fields)
-  };
+  if (!body) return null;
+  return parseOppRecord(body);
 }
 
 interface RawRelatedListResponse {
