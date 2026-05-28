@@ -6,7 +6,8 @@ import { identifyTarget } from '../matching/identify';
 import { showPopup } from '../popup/popup';
 import { buildSFTaskUrl } from '../salesforce/url-builder';
 import { recordMapping } from '../storage/mappings';
-import { recordContactVisit, listRecentContacts } from '../storage/recent-sf';
+import { listRecentContacts } from '../storage/recent-sf';
+import { applyDiscordHandleLearning } from './handle-learning';
 
 // Discord's logged-in user has a unique ID embedded in several DOM places. We
 // read it once per click. The most reliable source we've found is the user
@@ -97,16 +98,9 @@ async function handleLogClick(): Promise<void> {
   if (!result) return;
 
   if (result.learnHandleForContactId) {
-    const existing = listRecentContacts().find(c => c.id === result.learnHandleForContactId);
-    if (existing) {
-      recordContactVisit({
-        id: existing.id,
-        name: existing.name,
-        discordUsername: counterparty.username || existing.discordUsername,
-        discordUserId: counterparty.userId ?? existing.discordUserId,
-        opps: existing.opps
-      });
-      console.log(`[discord-sf-logger] learned Discord handle for Contact ${existing.id} = ${counterparty.username}${counterparty.userId ? ` (id ${counterparty.userId})` : ''}`);
+    const learned = applyDiscordHandleLearning(result.learnHandleForContactId, counterparty);
+    if (learned) {
+      console.log(`[discord-sf-logger] learned Discord handle for Contact ${result.learnHandleForContactId} = ${counterparty.username}${counterparty.userId ? ` (id ${counterparty.userId})` : ''}`);
     }
   }
 

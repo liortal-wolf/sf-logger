@@ -1,6 +1,7 @@
 import { popupHTML } from './popup-template';
 import { popupCSS } from './popup-styles';
 import type { IdentifyStrategy } from '../types';
+import { shouldLearnHandle } from '../discord/handle-learning';
 
 export interface PopupInput {
   strategy: IdentifyStrategy;
@@ -136,13 +137,7 @@ export function showPopup(input: PopupInput): Promise<PopupResult | null> {
         const description = (shadow.querySelector('.dsfl-popup__description') as HTMLTextAreaElement).value;
         // Fold-in A: if the user manually picked a Contact whose cached
         // discordUsername is empty, ask the caller to learn the binding.
-        let learnHandleForContactId: string | undefined;
-        if (chosenContactId) {
-          const matched = input.contactChoices.find(c => c.id === chosenContactId);
-          if (matched && !matched.discordUsername) {
-            learnHandleForContactId = chosenContactId;
-          }
-        }
+        const learnHandleForContactId = shouldLearnHandle(chosenContactId, input.contactChoices);
         close({
           oppId: chosenOppId,
           oppName: chosenOppName,

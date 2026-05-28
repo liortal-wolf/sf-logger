@@ -44,10 +44,17 @@ export function registerSettingsMenu(): void {
       'Settings (API key, SF domain, subject prefix) are preserved.'
     );
     if (!ok) return;
-    GM_deleteValue('recent_sf_records');
-    GM_deleteValue('recent_contacts');
-    GM_deleteValue('learned_mappings');
-    console.log('[discord-sf-logger] local cache cleared');
+    clearLocalCache();
     alert('Local cache cleared. Tool will rebuild as you browse Salesforce.');
   });
+}
+
+// Deletes the three cache keys and leaves the `settings` key untouched. Split
+// out from the menu callback so it can be unit-tested without involving
+// confirm()/alert() prompts.
+export function clearLocalCache(): void {
+  GM_deleteValue('recent_sf_records');
+  GM_deleteValue('recent_contacts');
+  GM_deleteValue('learned_mappings');
+  console.log('[discord-sf-logger] local cache cleared');
 }

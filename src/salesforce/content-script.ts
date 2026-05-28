@@ -7,7 +7,12 @@ import {
 const POLL_INTERVAL_MS = 2000;
 const PENDING_FILL_KEY = 'pending_task_fill';
 
-const MAX_EMPTY_SCRAPE_POLLS = 5;
+// Stop retrying after ~3 minutes of empty polls on a single record. Cheap
+// enough to keep trying for a while because the user may switch to the
+// "Related" tab on a Contact / Opp page after the initial mount and we want
+// that switch to trigger a fresh scrape, but unbounded retries would keep
+// spinning indefinitely on records that genuinely have zero related items.
+const MAX_EMPTY_SCRAPE_POLLS = 100;
 const scrapedRecordIds = new Set<string>();
 const emptyScrapeCounts = new Map<string, number>();
 
@@ -70,6 +75,14 @@ function updateOpportunity(id: string): void {
       markScrapeSuccess(`opp-contacts:${id}`);
       console.log(`[discord-sf-logger] cached ${contacts.length} Contact Roles for Opp ${id}`);
     } else {
+      const emptyCount = (emptyScrapeCounts.get(`opp-contacts:${id}`) ?? 0) + 1;
+      if (emptyCount === 1 || emptyCount === 5) {
+        console.log(
+          `[discord-sf-logger] no Contact Roles found yet for Opp ${id} ` +
+          `(poll ${emptyCount}). ` +
+          `If this Opp has Contact Roles, click the Opp's "Related" tab so they render.`
+        );
+      }
       markScrapeEmpty(`opp-contacts:${id}`);
     }
   }
@@ -127,6 +140,14 @@ function updateContact(id: string): void {
       markScrapeSuccess(`contact-opps:${id}`);
       console.log(`[discord-sf-logger] cached ${opps.length} related Opps for Contact ${id}`);
     } else {
+      const emptyCount = (emptyScrapeCounts.get(`contact-opps:${id}`) ?? 0) + 1;
+      if (emptyCount === 1 || emptyCount === 5) {
+        console.log(
+          `[discord-sf-logger] no related Opps found yet for Contact ${id} ` +
+          `(poll ${emptyCount}). ` +
+          `If this Contact has Opps, click the Contact's "Related" tab so they render.`
+        );
+      }
       markScrapeEmpty(`contact-opps:${id}`);
     }
   }
@@ -402,17 +423,29 @@ function readContactDiscordUsername(): string | null {
   return readDiscordFromVisibleText();
 }
 
-// Walk all elements inside `el` AND inside `el.shadowRoot` (one level), return
-// the first match for `selector`. SF's LWC components host their label/value
-// in their own shadow root, which plain querySelector can't see.
+// Walk light DOM under `el` AND every nested shadow root inside it. Returns
+// the first match for `selector`. SF Lightning nests deeply — Discord field
+// value lives inside `records-record-layout-item > records-output-field >
+// (shadow) > lightning-formatted-text > (shadow) > text`. A single-level
+// shadow descent (the old implementation) reached `records-output-field` but
+// not `lightning-formatted-text`. This recursive version traverses the full
+// open-shadow subtree.
 function queryDeep<T extends Element = Element>(el: Element, selector: string): T | null {
-  const light = el.querySelector<T>(selector);
-  if (light) return light;
-  if (el.shadowRoot) {
-    const shadowMatch = el.shadowRoot.querySelector<T>(selector);
-    if (shadowMatch) return shadowMatch;
-  }
-  return null;
+  const visited = new WeakSet<Element | ShadowRoot>();
+  let found: T | null = null;
+  const walk = (root: Element | ShadowRoot): void => {
+    if (found || visited.has(root)) return;
+    visited.add(root);
+    const hit = root.querySelector<T>(selector);
+    if (hit) { found = hit; return; }
+    for (const child of Array.from(root.querySelectorAll('*'))) {
+      if (found) return;
+      const sr = (child as Element).shadowRoot;
+      if (sr) walk(sr);
+    }
+  };
+  walk(el);
+  return found;
 }
 
 function readLabelInside(item: HTMLElement): string | null {
@@ -436,7 +469,9 @@ function readValueInside(item: HTMLElement, labelText: string): string | null {
   const el = queryDeep<HTMLElement>(item, sel);
   if (el) {
     const t = readVisibleText(el);
-    if (t && t !== '-' && t !== '—' && t.toLowerCase() !== labelText.toLowerCase()) return t;
+    if (t && t !== '-' && t !== '—' && t.toLowerCase() !== labelText.toLowerCase() && !looksLikeButtonOrLabel(t, labelText)) {
+      return t;
+    }
   }
   // Last resort: subtract the label from the item's overall visible text.
   const itemText = readVisibleText(item);
@@ -444,11 +479,32 @@ function readValueInside(item: HTMLElement, labelText: string): string | null {
     const remainder = itemText.startsWith(labelText)
       ? itemText.slice(labelText.length).trim()
       : itemText;
-    if (remainder && remainder !== '-' && remainder !== '—' && remainder.length < 200) {
+    if (
+      remainder &&
+      remainder !== '-' &&
+      remainder !== '—' &&
+      remainder.length < 200 &&
+      !looksLikeButtonOrLabel(remainder, labelText)
+    ) {
       return remainder;
     }
   }
   return null;
+}
+
+// SF Lightning renders an "Edit <FieldLabel>" pencil button inside many
+// layout-items for inline editing. If queryDeep can't reach the actual value
+// element (deeply nested closed shadow root) we can end up reading that
+// button's text instead. Same defensive list as the body.innerText regex
+// fallback uses, plus an `Edit <labelText>` shape that catches any field.
+function looksLikeButtonOrLabel(value: string, labelText: string): boolean {
+  if (/^(Edit|View|Add|New|Delete|Clone|Share|Help)\b/i.test(value)) return true;
+  if (new RegExp(`^Edit\\s+${escapeForRegex(labelText)}\\b`, 'i').test(value)) return true;
+  return false;
+}
+
+function escapeForRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 // Cross-shadow visible-text reader. innerText computes rendered text across

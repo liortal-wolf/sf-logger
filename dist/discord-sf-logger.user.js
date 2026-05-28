@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discord → Salesforce Logger
 // @namespace    https://github.com/liortal-wolf/sf-logger
-// @version      0.2.0
+// @version      0.2.1
 // @author       Overwolf
 // @description  Log highlighted Discord conversations to Salesforce Opportunities with AI summaries
 // @supportURL   https://github.com/liortal-wolf/sf-logger/issues
@@ -627,6 +627,25 @@ Output only the JSON object. No markdown fences. No commentary.`;
   background: #4752c4; border-color: #4752c4;
 }
 `;
+	function applyDiscordHandleLearning(contactId, counterparty) {
+		if (!contactId) return false;
+		if (!counterparty.username && !counterparty.userId) return false;
+		const existing = listRecentContacts().find((c) => c.id === contactId);
+		if (!existing) return false;
+		recordContactVisit({
+			id: existing.id,
+			name: existing.name,
+			discordUsername: counterparty.username || existing.discordUsername,
+			discordUserId: counterparty.userId ?? existing.discordUserId,
+			opps: existing.opps
+		});
+		return true;
+	}
+	function shouldLearnHandle(chosenContactId, contactChoices) {
+		if (!chosenContactId) return void 0;
+		const matched = contactChoices.find((c) => c.id === chosenContactId);
+		if (matched && !matched.discordUsername) return chosenContactId;
+	}
 	var URL_WARN_THRESHOLD = 1200;
 	function showPopup(input) {
 		return new Promise((resolve) => {
@@ -716,11 +735,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 					}
 					const subject = shadow.querySelector(".dsfl-popup__subject").value;
 					const description = shadow.querySelector(".dsfl-popup__description").value;
-					let learnHandleForContactId;
-					if (chosenContactId) {
-						const matched = input.contactChoices.find((c) => c.id === chosenContactId);
-						if (matched && !matched.discordUsername) learnHandleForContactId = chosenContactId;
-					}
+					const learnHandleForContactId = shouldLearnHandle(chosenContactId, input.contactChoices);
 					close({
 						oppId: chosenOppId,
 						oppName: chosenOppName,
@@ -876,17 +891,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		});
 		if (!result) return;
 		if (result.learnHandleForContactId) {
-			const existing = listRecentContacts().find((c) => c.id === result.learnHandleForContactId);
-			if (existing) {
-				recordContactVisit({
-					id: existing.id,
-					name: existing.name,
-					discordUsername: counterparty.username || existing.discordUsername,
-					discordUserId: counterparty.userId ?? existing.discordUserId,
-					opps: existing.opps
-				});
-				console.log(`[discord-sf-logger] learned Discord handle for Contact ${existing.id} = ${counterparty.username}${counterparty.userId ? ` (id ${counterparty.userId})` : ""}`);
-			}
+			if (applyDiscordHandleLearning(result.learnHandleForContactId, counterparty)) console.log(`[discord-sf-logger] learned Discord handle for Contact ${result.learnHandleForContactId} = ${counterparty.username}${counterparty.userId ? ` (id ${counterparty.userId})` : ""}`);
 		}
 		const today = new Date().toISOString().slice(0, 10);
 		GM_setValue(PENDING_FILL_KEY$1, {
@@ -907,7 +912,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 	}
 	var POLL_INTERVAL_MS = 2e3;
 	var PENDING_FILL_KEY = "pending_task_fill";
-	var MAX_EMPTY_SCRAPE_POLLS = 5;
+	var MAX_EMPTY_SCRAPE_POLLS = 100;
 	var scrapedRecordIds = new Set();
 	var emptyScrapeCounts = new Map();
 	function shouldRetryScrape(recordId) {
@@ -955,7 +960,11 @@ Output only the JSON object. No markdown fences. No commentary.`;
 				}));
 				markScrapeSuccess(`opp-contacts:${id}`);
 				console.log(`[discord-sf-logger] cached ${contacts.length} Contact Roles for Opp ${id}`);
-			} else markScrapeEmpty(`opp-contacts:${id}`);
+			} else {
+				const emptyCount = (emptyScrapeCounts.get(`opp-contacts:${id}`) ?? 0) + 1;
+				if (emptyCount === 1 || emptyCount === 5) console.log(`[discord-sf-logger] no Contact Roles found yet for Opp ${id} (poll ${emptyCount}). If this Opp has Contact Roles, click the Opp's "Related" tab so they render.`);
+				markScrapeEmpty(`opp-contacts:${id}`);
+			}
 		}
 		const existing = listRecent().find((r) => r.id === id);
 		const hasGoodName = existing && existing.name !== existing.id;
@@ -997,7 +1006,11 @@ Output only the JSON object. No markdown fences. No commentary.`;
 				}));
 				markScrapeSuccess(`contact-opps:${id}`);
 				console.log(`[discord-sf-logger] cached ${opps.length} related Opps for Contact ${id}`);
-			} else markScrapeEmpty(`contact-opps:${id}`);
+			} else {
+				const emptyCount = (emptyScrapeCounts.get(`contact-opps:${id}`) ?? 0) + 1;
+				if (emptyCount === 1 || emptyCount === 5) console.log(`[discord-sf-logger] no related Opps found yet for Contact ${id} (poll ${emptyCount}). If this Contact has Opps, click the Contact's "Related" tab so they render.`);
+				markScrapeEmpty(`contact-opps:${id}`);
+			}
 		}
 		const existing = listRecentContacts().find((c) => c.id === id);
 		const hasGoodName = existing && existing.name !== existing.id;
@@ -1190,13 +1203,24 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		return readDiscordFromVisibleText();
 	}
 	function queryDeep(el, selector) {
-		const light = el.querySelector(selector);
-		if (light) return light;
-		if (el.shadowRoot) {
-			const shadowMatch = el.shadowRoot.querySelector(selector);
-			if (shadowMatch) return shadowMatch;
-		}
-		return null;
+		const visited = new WeakSet();
+		let found = null;
+		const walk = (root) => {
+			if (found || visited.has(root)) return;
+			visited.add(root);
+			const hit = root.querySelector(selector);
+			if (hit) {
+				found = hit;
+				return;
+			}
+			for (const child of Array.from(root.querySelectorAll("*"))) {
+				if (found) return;
+				const sr = child.shadowRoot;
+				if (sr) walk(sr);
+			}
+		};
+		walk(el);
+		return found;
 	}
 	function readLabelInside(item) {
 		const el = queryDeep(item, ".slds-form-element__label, .test-id__field-label, label, .field-label");
@@ -1207,14 +1231,22 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		const el = queryDeep(item, "a[href*=\"/Account/\"], lightning-formatted-text, lightning-formatted-name, lightning-formatted-rich-text, records-formula-output, records-output-field, .slds-form-element__static, .test-id__field-value");
 		if (el) {
 			const t = readVisibleText(el);
-			if (t && t !== "-" && t !== "—" && t.toLowerCase() !== labelText.toLowerCase()) return t;
+			if (t && t !== "-" && t !== "—" && t.toLowerCase() !== labelText.toLowerCase() && !looksLikeButtonOrLabel(t, labelText)) return t;
 		}
 		const itemText = readVisibleText(item);
 		if (itemText) {
 			const remainder = itemText.startsWith(labelText) ? itemText.slice(labelText.length).trim() : itemText;
-			if (remainder && remainder !== "-" && remainder !== "—" && remainder.length < 200) return remainder;
+			if (remainder && remainder !== "-" && remainder !== "—" && remainder.length < 200 && !looksLikeButtonOrLabel(remainder, labelText)) return remainder;
 		}
 		return null;
+	}
+	function looksLikeButtonOrLabel(value, labelText) {
+		if (/^(Edit|View|Add|New|Delete|Clone|Share|Help)\b/i.test(value)) return true;
+		if (new RegExp(`^Edit\\s+${escapeForRegex(labelText)}\\b`, "i").test(value)) return true;
+		return false;
+	}
+	function escapeForRegex(s) {
+		return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 	}
 	function readVisibleText(el) {
 		return (el.innerText ?? el.textContent ?? "").trim();
@@ -1408,14 +1440,17 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		});
 		GM_registerMenuCommand("Discord → SF: Clear local cache", () => {
 			if (!confirm("Clear all local Discord-SF Logger caches?\n\nWill delete:\n  • recent_sf_records (visited Opps + cached related Contacts)\n  • recent_contacts (visited Contacts + cached related Opps + Discord handles)\n  • learned_mappings (Discord counterparty → Opp memory)\n\nSettings (API key, SF domain, subject prefix) are preserved.")) return;
-			GM_deleteValue("recent_sf_records");
-			GM_deleteValue("recent_contacts");
-			GM_deleteValue("learned_mappings");
-			console.log("[discord-sf-logger] local cache cleared");
+			clearLocalCache();
 			alert("Local cache cleared. Tool will rebuild as you browse Salesforce.");
 		});
 	}
-	console.log(`%c[discord-sf-logger] loaded build 2026-05-27-contact-opps on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
+	function clearLocalCache() {
+		GM_deleteValue("recent_sf_records");
+		GM_deleteValue("recent_contacts");
+		GM_deleteValue("learned_mappings");
+		console.log("[discord-sf-logger] local cache cleared");
+	}
+	console.log(`%c[discord-sf-logger] loaded build 2026-05-28-handle-fix on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
 	registerSettingsMenu();
 	var host = window.location.hostname;
 	if (host === "discord.com") startDiscordIntegration();
