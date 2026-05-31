@@ -13,7 +13,7 @@ export default defineConfig({
       userscript: {
         name: 'Discord → Salesforce Logger',
         namespace: 'https://github.com/' + REPO_OWNER + '/' + REPO_NAME,
-        version: '0.3.1',
+        version: '0.3.2',
         description: 'Log highlighted Discord conversations to Salesforce Opportunities with AI summaries',
         author: 'Overwolf',
         match: [

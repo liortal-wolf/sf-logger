@@ -62,17 +62,38 @@ export function identifyTarget(input: IdentifyInput): IdentifyStrategy {
 
 function findContactForCounterparty(cp: DiscordCounterparty) {
   const all = listRecentContacts();
+  const byMostRecent = (a: { lastFocusedAt: string }, b: { lastFocusedAt: string }) =>
+    b.lastFocusedAt.localeCompare(a.lastFocusedAt);
+
+  // 1. Exact Discord user-ID match — most specific, survives renames.
   if (cp.userId) {
-    const byUserId = all
-      .filter(c => c.discordUserId === cp.userId)
-      .sort((a, b) => b.lastFocusedAt.localeCompare(a.lastFocusedAt))[0];
+    const byUserId = all.filter(c => c.discordUserId === cp.userId).sort(byMostRecent)[0];
     if (byUserId) return byUserId;
   }
+
   const normCp = normalizeDiscordHandle(cp.username);
   if (!normCp) return undefined;
-  return all
+
+  // 2. Discord field (Contact.Discord__c) match — explicitly configured handle.
+  const byDiscordField = all
     .filter(c => c.discordUsername && normalizeDiscordHandle(c.discordUsername) === normCp)
-    .sort((a, b) => b.lastFocusedAt.localeCompare(a.lastFocusedAt))[0];
+    .sort(byMostRecent)[0];
+  if (byDiscordField) return byDiscordField;
+
+  // 3. Contact name match — covers the common case where Discord's title shows
+  //    the display name (e.g. "@Kesem") and the SF Contact's Discord field has
+  //    the actual handle (e.g. "mutualmagic") that doesn't match the title.
+  //    Compare the normalized counterparty against each Contact's normalized
+  //    name. SF Contact names typically have spaces ("Kesem Smith"); Discord
+  //    display names don't — so this is a generous "starts with" match against
+  //    the first word of the name.
+  const byContactName = all
+    .filter(c => {
+      const first = c.name.split(/\s+/)[0] ?? '';
+      return normalizeDiscordHandle(first) === normCp;
+    })
+    .sort(byMostRecent)[0];
+  return byContactName;
 }
 
 const RECENCY_THRESHOLD_MS = 4 * 60 * 60 * 1000;

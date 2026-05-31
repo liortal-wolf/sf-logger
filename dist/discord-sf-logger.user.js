@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discord → Salesforce Logger
 // @namespace    https://github.com/liortal-wolf/sf-logger
-// @version      0.3.1
+// @version      0.3.2
 // @author       Overwolf
 // @description  Log highlighted Discord conversations to Salesforce Opportunities with AI summaries
 // @supportURL   https://github.com/liortal-wolf/sf-logger/issues
@@ -445,13 +445,18 @@ Output only the JSON object. No markdown fences. No commentary.`;
 	}
 	function findContactForCounterparty(cp) {
 		const all = listRecentContacts();
+		const byMostRecent = (a, b) => b.lastFocusedAt.localeCompare(a.lastFocusedAt);
 		if (cp.userId) {
-			const byUserId = all.filter((c) => c.discordUserId === cp.userId).sort((a, b) => b.lastFocusedAt.localeCompare(a.lastFocusedAt))[0];
+			const byUserId = all.filter((c) => c.discordUserId === cp.userId).sort(byMostRecent)[0];
 			if (byUserId) return byUserId;
 		}
 		const normCp = normalizeDiscordHandle(cp.username);
 		if (!normCp) return void 0;
-		return all.filter((c) => c.discordUsername && normalizeDiscordHandle(c.discordUsername) === normCp).sort((a, b) => b.lastFocusedAt.localeCompare(a.lastFocusedAt))[0];
+		const byDiscordField = all.filter((c) => c.discordUsername && normalizeDiscordHandle(c.discordUsername) === normCp).sort(byMostRecent)[0];
+		if (byDiscordField) return byDiscordField;
+		return all.filter((c) => {
+			return normalizeDiscordHandle(c.name.split(/\s+/)[0] ?? "") === normCp;
+		}).sort(byMostRecent)[0];
 	}
 	var RECENCY_THRESHOLD_MS = 14400 * 1e3;
 	function isRecent(iso) {
@@ -1274,7 +1279,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		GM_deleteValue("learned_mappings");
 		console.log("[discord-sf-logger] local cache cleared");
 	}
-	console.log(`%c[discord-sf-logger] loaded build 2026-05-31-discord-title on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
+	console.log(`%c[discord-sf-logger] loaded build 2026-05-31-name-fallback on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
 	registerSettingsMenu();
 	var host = window.location.hostname;
 	if (host === "discord.com") startDiscordIntegration();

@@ -171,4 +171,53 @@ describe('identifyTarget strategy 3: contact-scoped-picker', () => {
     const result = identifyTarget({ counterparty: { username: 'mutualmagic' } });
     expect(result.kind).toBe('open-sf-tab');
   });
+
+  it('matches by Contact name when the SF Discord field differs from the Discord display name', () => {
+    // Real-world case: SF Contact named "Kesem" has Discord__c="mutualmagic"
+    // (the actual handle). Discord's title shows "@Kesem" (display name).
+    // The counterparty.username extracted from the title is "Kesem" — doesn't
+    // match Contact.discordUsername, but DOES match Contact.name.
+    recordContactVisit({
+      id: '003A',
+      name: 'Kesem',
+      discordUsername: 'mutualmagic',
+      opps: [{ id: '006A', name: 'Acme', lastSeenAt: '2026-05-27T10:00:00Z' }]
+    });
+    const result = identifyTarget({ counterparty: { username: 'Kesem' } });
+    expect(result.kind).toBe('contact-scoped-picker');
+    if (result.kind === 'contact-scoped-picker') {
+      expect(result.contact.id).toBe('003A');
+    }
+  });
+
+  it('Contact-name match uses the first word so "Joe Smith" matches "@joe"', () => {
+    recordContactVisit({
+      id: '003A',
+      name: 'Joe Smith',
+      discordUsername: 'jsmith_overwolf',
+      opps: [{ id: '006A', name: 'Acme', lastSeenAt: '2026-05-27T10:00:00Z' }]
+    });
+    const result = identifyTarget({ counterparty: { username: 'joe' } });
+    expect(result.kind).toBe('contact-scoped-picker');
+  });
+
+  it('prefers a Discord-field match over a Contact-name match when both exist', () => {
+    recordContactVisit({
+      id: '003A',
+      name: 'Kesem',
+      discordUsername: 'unrelated_handle',
+      opps: [{ id: '006WRONG', name: 'Wrong', lastSeenAt: '2026-05-27T10:00:00Z' }]
+    });
+    recordContactVisit({
+      id: '003B',
+      name: 'Someone Else',
+      discordUsername: 'kesem',
+      opps: [{ id: '006RIGHT', name: 'Right', lastSeenAt: '2026-05-27T10:00:00Z' }]
+    });
+    const result = identifyTarget({ counterparty: { username: 'kesem' } });
+    expect(result.kind).toBe('contact-scoped-picker');
+    if (result.kind === 'contact-scoped-picker') {
+      expect(result.contact.id).toBe('003B'); // matched by discordUsername, not name
+    }
+  });
 });
