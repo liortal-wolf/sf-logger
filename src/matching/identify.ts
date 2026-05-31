@@ -96,10 +96,15 @@ function findContactForCounterparty(cp: DiscordCounterparty) {
   return byContactName;
 }
 
-const RECENCY_THRESHOLD_MS = 4 * 60 * 60 * 1000;
+// Strategy 1 fires only when an Opp tab is currently open. The SF watcher
+// refreshes lastFocusedAt every 2-second tick while the Opp page is loaded,
+// and clears it on tab close (beforeunload → '1970-01-01T...'). A 10-second
+// recency window reliably captures "tab is open right now" without the old
+// 4-hour staleness where closing the tab still triggered strategy 1 for hours.
+const OPEN_TAB_PRESENCE_MS = 10 * 1000;
 
 function isRecent(iso: string): boolean {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return false;
-  return Date.now() - t < RECENCY_THRESHOLD_MS;
+  return Date.now() - t < OPEN_TAB_PRESENCE_MS;
 }

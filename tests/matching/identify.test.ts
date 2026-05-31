@@ -36,6 +36,33 @@ describe('identifyTarget strategy chain', () => {
     }
   });
 
+  it('skips open-sf-tab when the last focus is older than the 10-second window', () => {
+    // Simulate a tab that was closed (lastFocusedAt is the sentinel epoch
+    // value written by clearLastFocused on beforeunload).
+    GM_setValue('recent_sf_records', [{
+      id: '006STALE',
+      name: 'Stale Opp',
+      visitedAt: new Date().toISOString(),
+      lastFocusedAt: '1970-01-01T00:00:00.000Z'
+    }]);
+    const result = identifyTarget({ counterparty: { username: 'someone' } });
+    expect(result.kind).not.toBe('open-sf-tab');
+  });
+
+  it('skips open-sf-tab when lastFocusedAt is ~30 seconds old (beyond the 10-second window)', () => {
+    // Simulate the watcher having stopped bumping the timestamp (tab
+    // backgrounded or closed without beforeunload firing).
+    const thirtySecondsAgo = new Date(Date.now() - 30_000).toISOString();
+    GM_setValue('recent_sf_records', [{
+      id: '006OLDISH',
+      name: 'Oldish Opp',
+      visitedAt: thirtySecondsAgo,
+      lastFocusedAt: thirtySecondsAgo
+    }]);
+    const result = identifyTarget({ counterparty: { username: 'someone' } });
+    expect(result.kind).not.toBe('open-sf-tab');
+  });
+
   it('falls back to learned-mapping when no open SF tab matches', () => {
     recordMapping({ username: 'joe_acme' }, '006Hu000ABC', 'Acme Q2 Renewal');
     const result = identifyTarget({ counterparty: { username: 'joe_acme' } });

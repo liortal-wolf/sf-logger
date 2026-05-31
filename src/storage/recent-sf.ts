@@ -68,6 +68,31 @@ export function recordVisit(input: OpportunityVisitInput): void {
   GM_setValue(OPPS_KEY, existing.slice(0, MAX_ENTRIES));
 }
 
+// Refresh "this Opp tab is currently open" presence by updating
+// lastFocusedAt to now. Called every watcher tick on Opp pages so the
+// timestamp stays fresh while the tab is loaded. No-op if the Opp isn't
+// already in storage (the first visit creates the entry via recordVisit).
+export function bumpLastFocused(id: string): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const all = GM_getValue<any[]>(OPPS_KEY, []);
+  const idx = all.findIndex(r => r && r.id === id);
+  if (idx < 0) return;
+  all[idx] = { ...all[idx], lastFocusedAt: new Date().toISOString() };
+  GM_setValue(OPPS_KEY, all);
+}
+
+// Mark an Opp's tab as closed by setting lastFocusedAt to a far-past
+// timestamp so the recency check in identifyTarget fails immediately on
+// the next Log-to-SF click. Called from the SF page's beforeunload handler.
+export function clearLastFocused(id: string): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const all = GM_getValue<any[]>(OPPS_KEY, []);
+  const idx = all.findIndex(r => r && r.id === id);
+  if (idx < 0) return;
+  all[idx] = { ...all[idx], lastFocusedAt: '1970-01-01T00:00:00.000Z' };
+  GM_setValue(OPPS_KEY, all);
+}
+
 function mergeContacts(
   existing: RecentOpportunity['contacts'],
   incoming: OpportunityVisitInput['contacts']

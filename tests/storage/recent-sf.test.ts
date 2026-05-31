@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   recordVisit, listRecent, getMostRecentlyFocused,
-  recordContactVisit, listRecentContacts
+  recordContactVisit, listRecentContacts,
+  bumpLastFocused, clearLastFocused
 } from '../../src/storage/recent-sf';
 
 describe('recent SF opportunities', () => {
@@ -85,6 +86,35 @@ describe('recent SF opportunities', () => {
     expect(list.length).toBe(1);
     expect(list[0].id).toBe('006A');
     expect(list[0].account).toEqual({ id: '001AC', name: 'Acme Inc' });
+  });
+
+  it('bumpLastFocused updates lastFocusedAt to roughly now', async () => {
+    recordVisit({ id: '006A', name: 'Acme' });
+    const initial = listRecent()[0].lastFocusedAt;
+    await new Promise(r => setTimeout(r, 5));
+    bumpLastFocused('006A');
+    const after = listRecent()[0].lastFocusedAt;
+    expect(after > initial).toBe(true);
+  });
+
+  it('bumpLastFocused is a no-op when the Opp is not in storage', () => {
+    bumpLastFocused('006MISSING');
+    expect(listRecent()).toEqual([]);
+  });
+
+  it('clearLastFocused sets lastFocusedAt to the epoch so strategy 1 fails immediately', () => {
+    recordVisit({ id: '006A', name: 'Acme' });
+    clearLastFocused('006A');
+    const stored = listRecent()[0];
+    expect(stored.lastFocusedAt).toBe('1970-01-01T00:00:00.000Z');
+    // The other fields stay intact
+    expect(stored.id).toBe('006A');
+    expect(stored.name).toBe('Acme');
+  });
+
+  it('clearLastFocused is a no-op when the Opp is not in storage', () => {
+    expect(() => clearLastFocused('006MISSING')).not.toThrow();
+    expect(listRecent()).toEqual([]);
   });
 
   it('unions contacts on repeat Opp visits, keyed by Contact id', () => {

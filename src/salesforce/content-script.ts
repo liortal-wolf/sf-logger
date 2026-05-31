@@ -1,4 +1,9 @@
-import { recordVisit, recordContactVisit } from '../storage/recent-sf';
+import {
+  recordVisit,
+  recordContactVisit,
+  bumpLastFocused,
+  clearLastFocused
+} from '../storage/recent-sf';
 import { fetchContact, fetchContactRelatedOpps, fetchOpportunity, fetchOppContactRoles } from './ui-api';
 
 const POLL_INTERVAL_MS = 2000;
@@ -43,6 +48,16 @@ export function startSalesforceWatcher(): void {
     tryFillPendingTask();
   };
 
+  // When the SF tab closes, mark any currently-focused Opp as no longer
+  // present so strategy 1 (open-sf-tab) in the Discord-side identifyTarget
+  // stops firing for it immediately, rather than waiting for the recency
+  // window to elapse. Best-effort — won't fire on browser crash, but the
+  // short recency window (~10s) handles that fallback.
+  window.addEventListener('beforeunload', () => {
+    const page = parseLightningUrl(window.location.href);
+    if (page?.type === 'Opportunity') clearLastFocused(page.id);
+  });
+
   window.addEventListener('popstate', tick);
   window.addEventListener('hashchange', tick);
   window.addEventListener('focus', tick);
@@ -51,6 +66,12 @@ export function startSalesforceWatcher(): void {
 }
 
 function updateOpportunity(id: string): void {
+  // Refresh "this tab is open right now" presence every tick so strategy 1
+  // (open-sf-tab) in identifyTarget sees a fresh timestamp while the page
+  // is loaded. No-op until the first successful API fetch creates the
+  // storage entry below — bumpLastFocused only updates existing entries.
+  bumpLastFocused(id);
+
   const key = `opp:${id}`;
   if (!shouldCallApi(key)) return;
 

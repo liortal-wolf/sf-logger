@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discord → Salesforce Logger
 // @namespace    https://github.com/liortal-wolf/sf-logger
-// @version      0.3.2
+// @version      0.3.3
 // @author       Overwolf
 // @description  Log highlighted Discord conversations to Salesforce Opportunities with AI summaries
 // @supportURL   https://github.com/liortal-wolf/sf-logger/issues
@@ -301,6 +301,26 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		existing.unshift(updated);
 		GM_setValue(OPPS_KEY, existing.slice(0, MAX_ENTRIES));
 	}
+	function bumpLastFocused(id) {
+		const all = GM_getValue(OPPS_KEY, []);
+		const idx = all.findIndex((r) => r && r.id === id);
+		if (idx < 0) return;
+		all[idx] = {
+			...all[idx],
+			lastFocusedAt: new Date().toISOString()
+		};
+		GM_setValue(OPPS_KEY, all);
+	}
+	function clearLastFocused(id) {
+		const all = GM_getValue(OPPS_KEY, []);
+		const idx = all.findIndex((r) => r && r.id === id);
+		if (idx < 0) return;
+		all[idx] = {
+			...all[idx],
+			lastFocusedAt: "1970-01-01T00:00:00.000Z"
+		};
+		GM_setValue(OPPS_KEY, all);
+	}
 	function mergeContacts(existing, incoming) {
 		if (!incoming || incoming.length === 0) return existing;
 		const byId = new Map();
@@ -458,11 +478,11 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			return normalizeDiscordHandle(c.name.split(/\s+/)[0] ?? "") === normCp;
 		}).sort(byMostRecent)[0];
 	}
-	var RECENCY_THRESHOLD_MS = 14400 * 1e3;
+	var OPEN_TAB_PRESENCE_MS = 10 * 1e3;
 	function isRecent(iso) {
 		const t = Date.parse(iso);
 		if (Number.isNaN(t)) return false;
-		return Date.now() - t < RECENCY_THRESHOLD_MS;
+		return Date.now() - t < OPEN_TAB_PRESENCE_MS;
 	}
 	var popupHTML = (data) => `
 <div class="dsfl-popup">
@@ -1065,6 +1085,10 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			}
 			tryFillPendingTask();
 		};
+		window.addEventListener("beforeunload", () => {
+			const page = parseLightningUrl(window.location.href);
+			if (page?.type === "Opportunity") clearLastFocused(page.id);
+		});
 		window.addEventListener("popstate", tick);
 		window.addEventListener("hashchange", tick);
 		window.addEventListener("focus", tick);
@@ -1072,6 +1096,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		tick();
 	}
 	function updateOpportunity(id) {
+		bumpLastFocused(id);
 		const key = `opp:${id}`;
 		if (!shouldCallApi(key)) return;
 		(async () => {
@@ -1279,7 +1304,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		GM_deleteValue("learned_mappings");
 		console.log("[discord-sf-logger] local cache cleared");
 	}
-	console.log(`%c[discord-sf-logger] loaded build 2026-05-31-name-fallback on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
+	console.log(`%c[discord-sf-logger] loaded build 2026-05-31-tab-presence on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
 	registerSettingsMenu();
 	var host = window.location.hostname;
 	if (host === "discord.com") startDiscordIntegration();
