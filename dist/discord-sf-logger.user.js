@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discord → Salesforce Logger
 // @namespace    https://github.com/liortal-wolf/sf-logger
-// @version      0.3.0
+// @version      0.3.1
 // @author       Overwolf
 // @description  Log highlighted Discord conversations to Salesforce Opportunities with AI summaries
 // @supportURL   https://github.com/liortal-wolf/sf-logger/issues
@@ -67,13 +67,20 @@
 		return rawText.split("\n").map((line) => line.replace(TYPING_RE, "").trim()).filter((line) => line.length > 0).join("\n");
 	}
 	function detectCounterpartyFromDocumentTitle(title) {
-		const match = title.match(/@([a-zA-Z0-9_.]+)\s*-\s*Discord$/);
+		const match = title.replace(/^\s*\(\d+\)\s*/, "").match(/@([a-zA-Z0-9_.\-]+)/);
 		return match ? match[1] : "";
 	}
 	function detectCounterparty(currentUserId) {
 		const username = detectCounterpartyFromDocumentTitle(document.title);
 		const userId = pickCounterpartyUserId(currentUserId);
-		if (!username && !userId) return null;
+		if (!username && !userId) {
+			console.warn("[discord-sf-logger] could not detect counterparty", {
+				title: document.title,
+				url: window.location.pathname,
+				authorIdElementCount: document.querySelectorAll("[data-author-id]").length
+			});
+			return null;
+		}
 		return {
 			username,
 			userId
@@ -1267,7 +1274,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		GM_deleteValue("learned_mappings");
 		console.log("[discord-sf-logger] local cache cleared");
 	}
-	console.log(`%c[discord-sf-logger] loaded build 2026-05-28-ui-api on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
+	console.log(`%c[discord-sf-logger] loaded build 2026-05-31-discord-title on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
 	registerSettingsMenu();
 	var host = window.location.hostname;
 	if (host === "discord.com") startDiscordIntegration();

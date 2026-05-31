@@ -62,4 +62,32 @@ describe('detectCounterparty', () => {
     document.body.innerHTML = '';
     expect(detectCounterparty(CURRENT_USER_ID)).toBeNull();
   });
+
+  it('parses the 2026 title format with notification count and pipe separator', () => {
+    mockDocumentTitle('(2) Discord | @Kesem');
+    document.body.innerHTML = '';
+    const cp = detectCounterparty(CURRENT_USER_ID);
+    expect(cp?.username).toBe('Kesem');
+  });
+
+  it('parses the 2026 title format without a notification count', () => {
+    mockDocumentTitle('Discord | @kesem');
+    document.body.innerHTML = '';
+    const cp = detectCounterparty(CURRENT_USER_ID);
+    expect(cp?.username).toBe('kesem');
+  });
+
+  it('handles handles containing periods and hyphens', () => {
+    mockDocumentTitle('(5) Discord | @kesem.overwolf-bd');
+    document.body.innerHTML = '';
+    const cp = detectCounterparty(CURRENT_USER_ID);
+    expect(cp?.username).toBe('kesem.overwolf-bd');
+  });
+
+  it('still parses the legacy "@handle - Discord" title format', () => {
+    mockDocumentTitle('@joe - Discord');
+    document.body.innerHTML = '';
+    const cp = detectCounterparty(CURRENT_USER_ID);
+    expect(cp?.username).toBe('joe');
+  });
 });

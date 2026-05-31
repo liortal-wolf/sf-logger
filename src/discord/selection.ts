@@ -21,25 +21,46 @@ export function extractFromSelectionText(rawText: string): string {
     .join('\n');
 }
 
+// Extracts the counterparty handle from Discord's page title. Title formats
+// observed in production:
+//   "(2) Discord | @Kesem"      — current 2026 format with notification count
+//   "Discord | @Kesem"          — current format, no unread
+//   "@kesem - Discord"          — older format (kept for backward-compat)
+//   "Discord"                   — no DM open; returns empty string
+// We strip any "(N) " notification prefix, then look for @<handle> anywhere
+// in the title. Handles can be mixed case (display names) or all-lowercase
+// (true usernames); normalizeDiscordHandle() at the matching layer downcases.
 export function detectCounterpartyFromDocumentTitle(title: string): string {
-  const match = title.match(/@([a-zA-Z0-9_.]+)\s*-\s*Discord$/);
+  const stripped = title.replace(/^\s*\(\d+\)\s*/, '');
+  const match = stripped.match(/@([a-zA-Z0-9_.\-]+)/);
   return match ? match[1] : '';
 }
 
 // Returns the counterparty's Discord identity by combining two sources:
-//   - username comes from document.title (existing behaviour, stable for DMs)
-//   - userId is the unique data-author-id on visible message <li> elements,
-//     excluding the current user's. Falls back to undefined when the selection
-//     is ambiguous (multiple non-self IDs) or when no data-author-id attributes
-//     are reachable.
+//   - username comes from document.title (always works for DMs)
+//   - userId, when extractable, is the non-self Discord user-ID from a
+//     [data-author-id] attribute on a visible message. Discord has renamed
+//     this attribute in past redesigns, so this is best-effort — undefined
+//     means "couldn't extract", not "no such user".
 //
-// `currentUserId` is the Discord user-ID of the logged-in user, used to
-// exclude self-messages. Provided by the caller (content-script reads it once
-// per session from the user-area panel).
+// `currentUserId` is the Discord user-ID of the logged-in user (used to
+// exclude self-messages from the userId extraction). Provided by the caller.
+//
+// Returns null only when BOTH username and userId are missing — i.e. the
+// user is on a page that isn't a recognizable DM or channel. When this fires
+// we log a diagnostic so future Discord redesigns are visible without
+// needing the user to file a bug.
 export function detectCounterparty(currentUserId: string | null): import('../types').DiscordCounterparty | null {
   const username = detectCounterpartyFromDocumentTitle(document.title);
   const userId = pickCounterpartyUserId(currentUserId);
-  if (!username && !userId) return null;
+  if (!username && !userId) {
+    console.warn('[discord-sf-logger] could not detect counterparty', {
+      title: document.title,
+      url: window.location.pathname,
+      authorIdElementCount: document.querySelectorAll('[data-author-id]').length
+    });
+    return null;
+  }
   return { username, userId };
 }
 
