@@ -4,14 +4,22 @@ Tracked features that aren't yet scheduled. Promote to a spec under `docs/superp
 
 ## Big-ticket items
 
-### Salesforce UI API fallback
-When the Discord counterparty doesn't match any locally cached Contact, query Salesforce directly to find them.
+### Salesforce Contact discovery (DEFERRED — investigated 2026-06-01, blocked)
+Attempted: discover Contacts the user hasn't yet visited in SF, by calling Lightning UI API endpoints that search or list Contacts.
 
-- Use SF's internal **UI API** endpoints (`/services/data/.../ui-api/...`) — the same ones Lightning itself uses. Standard SF licenses can hit them via the user's existing browser session cookies; no API license required.
-- Flow: search Contacts where `Discord__c = "<handle>"` → find the Contact → query related Opportunities → return for the picker.
-- Risk: UI API isn't formally documented for third-party use. Stable in practice but Salesforce can change shapes. Build in a fallback path that degrades to today's behavior on parse failures.
-- Folds naturally into the existing strategy chain in `src/matching/identify.ts` — slots between the contact-scoped picker and the global recent picker.
-- Open question: confirm Discord field's exact API name on Contact (probably `Discord__c`, possibly something else). Check via SF Object Manager.
+**Outcome:** all three discovery endpoints we tried are unavailable on the Overwolf SF org / Standard user license:
+- `/services/data/v60.0/ui-api/search-suggestions?q=...&types=Contact` → 404 NOT_FOUND
+- `/services/data/v60.0/search?q=FIND+{...}+IN+ALL+FIELDS+RETURNING+Contact(...)` → 401 INVALID_SESSION_ID (SOSL requires API-Enabled permission this license doesn't have)
+- `/services/data/v60.0/ui-api/list-records/Contact/__Recent` → 404
+- `/services/data/v60.0/ui-api/list-info/Contact` → 404
+
+By contrast, these endpoints DO work and power the current data layer:
+- `/services/data/v60.0/ui-api/records/<id>?fields=...`
+- `/services/data/v60.0/ui-api/related-list-records/<id>/<relName>?fields=...`
+
+**Conclusion:** discovery is blocked without a permission change at the SF org level (likely requires the "API Enabled" profile permission, which Overwolf does not grant Standard users). Workable workarounds (DOM-scraping the Contact list view page, maintaining a hardcoded list of IDs) aren't worth the brittleness.
+
+**Current behavior is acceptable:** visit a Contact in SF once → tool caches Name + Discord field + related Opps → strategy 3 matches by user-ID → Discord field → Contact name first-word. Covers the common case.
 
 ### LinkedIn flow
 Same end-to-end UX as Discord, but for LinkedIn messages.
