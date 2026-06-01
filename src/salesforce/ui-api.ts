@@ -151,6 +151,7 @@ export async function fetchOppContactRoles(oppId: string): Promise<UiApiContactR
     const contactId = readFieldValue(rec.fields?.ContactId);
     if (!contactId) continue;
     const contactName = rec.fields?.Contact?.displayValue ?? '';
+    if (!contactName) continue; // skip nameless rows (no read access to Contact, etc.)
     out.push({ contactId, contactName });
   }
   return out;

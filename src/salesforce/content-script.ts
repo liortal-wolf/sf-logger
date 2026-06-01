@@ -9,28 +9,29 @@ import { fetchContact, fetchContactRelatedOpps, fetchOpportunity, fetchOppContac
 const POLL_INTERVAL_MS = 2000;
 const PENDING_FILL_KEY = 'pending_task_fill';
 
-type ApiFetchState = 'success' | 'failed-permanently' | { failures: number };
+// Per-record API attempt state. Each id transitions exactly once:
+//   absent → 'in-flight' (when we kick off the fetch)
+//   'in-flight' → 'success' (data cached) or 'failed' (any error)
+// Once 'success' or 'failed', we don't retry within the session. The Lightning
+// UI API succeeds or fails deterministically — a 404 or schema problem won't
+// fix itself, and a 401 marks the whole session blocked via ui-api's own state.
+// Reset happens on full page reload (module-level state is per-tab).
+type ApiFetchState = 'in-flight' | 'success' | 'failed';
 const apiFetchState = new Map<string, ApiFetchState>();
-const MAX_API_RETRIES = 3;
 
 function shouldCallApi(key: string): boolean {
-  const s = apiFetchState.get(key);
-  if (s === 'success' || s === 'failed-permanently') return false;
-  return true;
+  // Skip if we have any state for this key (including 'in-flight' — that
+  // prevents a second tick firing a duplicate fetch while the first is still
+  // awaiting the network).
+  return !apiFetchState.has(key);
+}
+
+function markApiInFlight(key: string): void {
+  apiFetchState.set(key, 'in-flight');
 }
 
 function recordApiAttemptResult(key: string, ok: boolean): void {
-  if (ok) {
-    apiFetchState.set(key, 'success');
-    return;
-  }
-  const prior = apiFetchState.get(key);
-  const failures = (typeof prior === 'object' ? prior.failures : 0) + 1;
-  if (failures >= MAX_API_RETRIES) {
-    apiFetchState.set(key, 'failed-permanently');
-  } else {
-    apiFetchState.set(key, { failures });
-  }
+  apiFetchState.set(key, ok ? 'success' : 'failed');
 }
 
 interface PendingTaskFill {
@@ -74,6 +75,7 @@ function updateOpportunity(id: string): void {
 
   const key = `opp:${id}`;
   if (!shouldCallApi(key)) return;
+  markApiInFlight(key);
 
   void (async () => {
     try {
@@ -109,6 +111,7 @@ function updateOpportunity(id: string): void {
 function updateContact(id: string): void {
   const key = `contact:${id}`;
   if (!shouldCallApi(key)) return;
+  markApiInFlight(key);
 
   void (async () => {
     try {

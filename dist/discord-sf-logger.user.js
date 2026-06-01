@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Discord → Salesforce Logger
 // @namespace    https://github.com/liortal-wolf/sf-logger
-// @version      0.3.3
+// @version      0.3.4
 // @author       Overwolf
 // @description  Log highlighted Discord conversations to Salesforce Opportunities with AI summaries
 // @supportURL   https://github.com/liortal-wolf/sf-logger/issues
@@ -1050,6 +1050,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 			const contactId = readFieldValue(rec.fields?.ContactId);
 			if (!contactId) continue;
 			const contactName = rec.fields?.Contact?.displayValue ?? "";
+			if (!contactName) continue;
 			out.push({
 				contactId,
 				contactName
@@ -1060,21 +1061,14 @@ Output only the JSON object. No markdown fences. No commentary.`;
 	var POLL_INTERVAL_MS = 2e3;
 	var PENDING_FILL_KEY = "pending_task_fill";
 	var apiFetchState = new Map();
-	var MAX_API_RETRIES = 3;
 	function shouldCallApi(key) {
-		const s = apiFetchState.get(key);
-		if (s === "success" || s === "failed-permanently") return false;
-		return true;
+		return !apiFetchState.has(key);
+	}
+	function markApiInFlight(key) {
+		apiFetchState.set(key, "in-flight");
 	}
 	function recordApiAttemptResult(key, ok) {
-		if (ok) {
-			apiFetchState.set(key, "success");
-			return;
-		}
-		const prior = apiFetchState.get(key);
-		const failures = (typeof prior === "object" ? prior.failures : 0) + 1;
-		if (failures >= MAX_API_RETRIES) apiFetchState.set(key, "failed-permanently");
-		else apiFetchState.set(key, { failures });
+		apiFetchState.set(key, ok ? "success" : "failed");
 	}
 	function startSalesforceWatcher() {
 		const tick = () => {
@@ -1099,6 +1093,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		bumpLastFocused(id);
 		const key = `opp:${id}`;
 		if (!shouldCallApi(key)) return;
+		markApiInFlight(key);
 		(async () => {
 			try {
 				const [opp, contactRoles] = await Promise.all([fetchOpportunity(id), fetchOppContactRoles(id)]);
@@ -1129,6 +1124,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 	function updateContact(id) {
 		const key = `contact:${id}`;
 		if (!shouldCallApi(key)) return;
+		markApiInFlight(key);
 		(async () => {
 			try {
 				const [contact, opps] = await Promise.all([fetchContact(id), fetchContactRelatedOpps(id)]);
@@ -1304,7 +1300,7 @@ Output only the JSON object. No markdown fences. No commentary.`;
 		GM_deleteValue("learned_mappings");
 		console.log("[discord-sf-logger] local cache cleared");
 	}
-	console.log(`%c[discord-sf-logger] loaded build 2026-05-31-tab-presence on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
+	console.log(`%c[discord-sf-logger] loaded build 2026-06-01-polish on ${window.location.hostname}`, "background: #5865f2; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 600;");
 	registerSettingsMenu();
 	var host = window.location.hostname;
 	if (host === "discord.com") startDiscordIntegration();

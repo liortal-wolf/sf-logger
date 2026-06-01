@@ -288,4 +288,18 @@ describe('fetchOppContactRoles', () => {
     expect(roles).toHaveLength(1);
     expect(roles[0].contactId).toBe('003B');
   });
+
+  it('skips records with a ContactId but no Contact displayValue (no read access to the Contact)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      mockFetchResponse({
+        records: [
+          { id: '00K1', fields: { ContactId: { value: '003NOACCESS' }, Contact: { displayValue: null } } },
+          { id: '00K2', fields: { ContactId: { value: '003B' }, Contact: { displayValue: 'Visible' } } }
+        ]
+      })
+    );
+    const roles = await fetchOppContactRoles('006A');
+    expect(roles).toHaveLength(1);
+    expect(roles[0].contactId).toBe('003B');
+  });
 });
