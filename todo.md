@@ -32,15 +32,6 @@ Same end-to-end UX as Discord, but for LinkedIn messages.
 - Open question: How does LinkedIn's messaging DOM expose the counterparty's profile URL? Need a brief reconnaissance session before writing the spec.
 - Risk: LinkedIn changes their DOM more often than Discord — expect 1-2 selector fixes per year.
 
-### Github Actions: auto-build on push
-Right now you have to `npm run build` locally before committing or `dist/` lags the source. A simple Actions workflow can build on every push to `main` and commit the updated `dist/` automatically.
-
-- Triggers on `push` to `main` (skip if commit was made by the bot itself, to avoid loops).
-- Runs `npm ci && npm test && npm run build`.
-- Commits `dist/discord-sf-logger.user.js` if changed, with a `[skip ci]` flag.
-- Effect: you only edit source files; Tampermonkey users still get updates because `dist/` stays current.
-- Effort: ~30 min including testing the action.
-
 ## Small QoL items
 
 ### Stage-based picker filtering
@@ -52,16 +43,10 @@ A 4.5th strategy: when the Account is known but no specific Contact, show that A
 ### Disambiguation prompt for duplicate Discord handles
 Current behaviour for two Contacts sharing a Discord handle: pick the most-recently-focused. If this turns out to bite, add a "we found 2 Contacts with this handle — which one?" prompt before the picker.
 
-### Background pre-warming
-A one-time crawl on script install: open SF Contact list view, scrape every Contact's Discord field + linked Opps, cache them. Removes the "you have to visit Contact pages first" requirement entirely. Risky (opens many tabs, may trip SF rate limits) and likely supersedes the UI API fallback anyway.
-
 ## Architecture / hygiene
 
 ### Cross-user cache sharing
 Each Tampermonkey install has its own cache today, by design (no backend). If the tool gets used by a wider team, a shared sync layer (Cloudflare Workers KV, Supabase, etc.) becomes worth considering. Out of scope until there's a clear need.
 
-### Refactor scrapers into a single record-page pass
-Today we have multiple SF scrapers that each walk shadow DOM independently (`readRecordName`, `readLinkedAccount`, `readContactDiscordUsername`, soon `readContactRelatedOpps` and `readOppContactRoles`). Could consolidate into one walk that fans out to multiple field readers. Pure-refactor with no user-facing change; defer unless performance becomes an issue.
-
 ### Auto-write Discord field back to Salesforce
-After a popup pick that includes implicit handle learning (fold-in A from current spec), also queue a tab-open to the Contact's edit page with `defaultFieldValues=Discord__c=<handle>` so the value lands in SF too. Useful but adds tab clutter and a manual Save step. Hold off unless local-only learning proves insufficient.
+After a popup pick that includes implicit handle learning (fold-in A from the contact-opps spec), also queue a tab-open to the Contact's edit page with `defaultFieldValues=Discord__c=<handle>` so the value lands in SF too. Useful but adds tab clutter and a manual Save step. Hold off unless local-only learning proves insufficient.
